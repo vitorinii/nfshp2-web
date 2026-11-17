@@ -216,8 +216,13 @@ async function play() {
   }
 }
 playBtn.addEventListener('click', play);
+// Donate in the header: a short dialog with the Ko-fi link, closed as Ko-fi opens in its own tab
+$('donate-btn').addEventListener('click', () => $('donate').showModal());
+$('donate-go').addEventListener('click', () => $('donate').close());
+
 document.addEventListener('keydown', e => {
   if (e.key !== 'Enter' || $('start').hidden || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (document.querySelector('dialog[open]')) return;
   if (e.target.closest && e.target.closest('button, a, input, select, textarea')) return;
   e.preventDefault();
   play();
