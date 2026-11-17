@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#050b14">
+<title>Hot Pursuit 2 Web</title>
+<meta name="description" content="Need for Speed: Hot Pursuit 2 (PlayStation 2, 2002) in the browser: the game's own code recompiled to WebAssembly, drawn with WebGPU. Fan project, not affiliated with Electronic Arts.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="app" id="start">
+  <header class="panel top">
+    <div class="lightbar" aria-hidden="true"><span></span><span></span></div>
+    <div class="top-row">
+      <div class="brand">
+        <h1 class="title"><span class="chrome">Hot Pursuit 2</span> <span class="plate">Web</span></h1>
+        <p class="hint">Made by <a target="_blank" rel="noopener noreferrer" href="https://github.com/vitorinii">Vitorini</a>. <a href="#credits" id="credits-link">Credits</a> below. Fan project, not affiliated with or endorsed by Electronic Arts.</p>
+      </div>
+      <div class="row top-end">
+        <a target="_blank" rel="noopener noreferrer" class="btn" href="https://github.com/vitorinii/nfshp2-web"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>Source code</a>
+        <a target="_blank" rel="noopener noreferrer" class="btn" href="https://www.youtube.com/@v-racer"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2 31 31 0 0 0 0 12a31 31 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1A31 31 0 0 0 24 12a31 31 0 0 0-.5-5.8zM9.6 15.6V8.4l6.3 3.6-6.3 3.6z"/></svg>YouTube</a>
+      </div>
+    </div>
+    <div class="bar" role="progressbar" aria-label="Game loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress">
+      <div class="bar-fill" id="progress-fill"></div>
+    </div>
+  </header>
+
+  <div class="side">
+    <section class="panel hero" aria-label="Play">
+      <p class="status" id="status" role="status">Loading</p>
+      <p class="status-sub" id="status-sub">Loading the game.</p>
+      <button type="button" class="play" id="play" disabled>Play <kbd>Enter</kbd></button>
+      <ul class="problems" id="problems" aria-live="polite"></ul>
+    </section>
+
+    <section class="panel" aria-labelledby="controls-title" id="controls">
+      <h2 id="controls-title">Controls</h2>
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" role="tab" data-tab="keyboard">Keyboard</button>
+        <button type="button" class="tab" role="tab" data-tab="pad">Controller</button>
+      </div>
+      <ul class="keys pane" data-tab="keyboard" role="tabpanel">
+        <li><span>Accelerate, brake and reverse</span><span><kbd>↑</kbd><kbd>↓</kbd></span></li>
+        <li><span>Steer</span><span><kbd>←</kbd><kbd>→</kbd></span></li>
+        <li><span>Handbrake</span><span><kbd>Space</kbd></span></li>
+        <li><span>Speed boost</span><span><kbd>Shift</kbd></span></li>
+        <li><span>Shift down, shift up (manual)</span><span><kbd>Z</kbd><kbd>X</kbd></span></li>
+        <li><span>Horn or siren</span><span><kbd>H</kbd></span></li>
+        <li><span>Change view, look back</span><span><kbd>C</kbd><kbd>Q</kbd></span></li>
+        <li><span>Reset car</span><span><kbd>R</kbd></span></li>
+        <li><span>Show or hide the HUD</span><span><kbd>Tab</kbd></span></li>
+        <li><span>Pause</span><span><kbd>Esc</kbd></span></li>
+        <li><span>Menus: choose, back, help</span><span><kbd>Enter</kbd><kbd>Esc</kbd><kbd>F1</kbd></span></li>
+        <li><span>Full screen</span><span><kbd>Alt</kbd><kbd>Enter</kbd></span></li>
+      </ul>
+      <ul class="keys pane" data-tab="pad" role="tabpanel" hidden>
+        <li><span>Accelerate</span><span><kbd>A</kbd><kbd>✕</kbd></span></li>
+        <li><span>Brake and reverse</span><span><kbd>X</kbd><kbd>□</kbd></span></li>
+        <li><span>Steer</span><span><kbd>Left stick</kbd></span></li>
+        <li><span>Handbrake</span><span><kbd>RB</kbd><kbd>R1</kbd></span></li>
+        <li><span>Speed boost</span><span><kbd>Right stick press</kbd></span></li>
+        <li><span>Shift down, shift up (manual)</span><span><kbd>LT</kbd><kbd>RT</kbd></span></li>
+        <li><span>Horn or siren</span><span><kbd>B</kbd><kbd>○</kbd></span></li>
+        <li><span>Change view, look back</span><span><kbd>Y</kbd><kbd>LB</kbd></span></li>
+        <li><span>Reset car</span><span><kbd>Back</kbd></span></li>
+        <li><span>Pause</span><span><kbd>Start</kbd></span></li>
+        <li><span>Menus: choose, back</span><span><kbd>A</kbd><kbd>B</kbd></span></li>
+      </ul>
+      <p class="hint">Plug in a controller and press one of its buttons. Keys and buttons can be changed in the game: Options, Controls.</p>
+    </section>
+  </div>
+
+  <div class="content">
+    <section class="panel" aria-labelledby="saves-title">
+      <div class="panel-head">
+        <h2 id="saves-title">Saves</h2>
+        <div class="row">
+          <button type="button" class="btn" id="backup">Download backup</button>
+          <button type="button" class="btn" id="restore">Restore</button>
+          <input type="file" id="restore-file" accept=".zip,application/zip" hidden>
+        </div>
+      </div>
+      <p class="box" id="profiles-none">No profiles yet. Make one in the game: it is saved in this browser.</p>
+      <ul class="profiles" id="profiles"></ul>
+      <p class="msg" id="saves-msg" hidden></p>
+      <p class="hint">Your profiles and settings stay in this browser, never on the server. A backup keeps them safe, or takes them to another browser.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="data-title">
+      <div class="panel-head">
+        <h2 id="data-title">Game data on this device</h2>
+        <div class="row">
+          <button type="button" class="text-btn" id="data-remove" hidden>Remove</button>
+          <button type="button" class="btn" id="preload" disabled>Preload the game data</button>
+        </div>
+      </div>
+      <div class="bar small"><div class="bar-fill" id="data-fill"></div></div>
+      <p class="data-text" id="data-text">&nbsp;</p>
+      <p class="msg bad" id="data-msg" hidden></p>
+      <p class="hint">Preloaded, the game reads its tracks, cars and music from this device instead of the server: no waiting on a slow
+        connection. Play stops the download; what came stays, and Preload fetches the rest later.</p>
+      <p class="hint" id="data-local" hidden>You are playing from this computer's own server, so there is little to gain here.</p>
+    </section>
+
+    <section class="panel" aria-label="About this project" id="about">
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" role="tab" data-tab="about">About</button>
+        <button type="button" class="tab" role="tab" data-tab="credits">Credits</button>
+      </div>
+      <div class="pane prose" data-tab="about" role="tabpanel">
+        <p><i>Need for Speed: Hot Pursuit 2</i> (2002), the PlayStation 2 version, in your browser. The game's own code is translated to
+          C++ ahead of time and compiled to WebAssembly; WebGPU draws it and Web Audio plays it.</p>
+        <p>The driving is the console's: the demo races recorded in the game replay with every one of their checks matching.</p>
+        <p>Needs the latest Chrome or Edge on a computer.</p>
+      </div>
+      <div class="pane prose" data-tab="credits" role="tabpanel" hidden>
+        <p>Made by Vitorini: <a target="_blank" rel="noopener noreferrer" href="https://github.com/vitorinii">GitHub</a>, <a target="_blank" rel="noopener noreferrer" href="https://www.youtube.com/@v-racer">YouTube</a>.
+          The source code is on GitHub: <a target="_blank" rel="noopener noreferrer" href="https://github.com/vitorinii/nfshp2-web">vitorinii/nfshp2-web</a>.</p>
+        <p>Built on ZloiKILLER's <a href="https://github.com/ZloiKILLER/nfshp2-port-win" target="_blank" rel="noopener noreferrer">nfshp2-port-win</a>,
+          the static recompilation of the game and its PC runtime.</p>
+        <p>The browser side follows th0mk's <a href="https://github.com/th0mk/nfsu2-web" target="_blank" rel="noopener noreferrer">nfsu2-web</a>,
+          Need for Speed: Underground 2 in the browser.</p>
+        <p><i>Need for Speed</i> and <i>Hot Pursuit</i> are trademarks of Electronic Arts Inc.</p>
+      </div>
+    </section>
+  </div>
+</main>
+
+<div id="stage" hidden>
+  <canvas id="screen" tabindex="0"></canvas>
+  <div id="hud" class="hud"></div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

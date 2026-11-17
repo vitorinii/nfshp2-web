@@ -1,0 +1,22 @@
+# The server as a service on a Linux machine (a Proxmox LXC container, a VPS), started at boot and restarted if it stops.
+#   sudo cp deploy/nfshp2-web.service /etc/systemd/system/ && sudo systemctl enable --now nfshp2-web
+# It expects the files deploy/sync.sh copies in /opt/nfshp2-web (readable by everyone), and Node.js 20 or newer at /usr/bin/node.
+# It listens on 127.0.0.1:8080 only: the public reaches it through a tunnel or an https proxy.
+# It runs as nobody and only reads. No systemd sandboxing (ProtectSystem, PrivateTmp, DynamicUser): those need mount namespaces,
+# which an unprivileged LXC container without nesting does not give; the container is the sandbox there.
+[Unit]
+Description=Hot Pursuit 2 Web
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node web/server.mjs --host 127.0.0.1 --port 8080 --no-log
+WorkingDirectory=/opt/nfshp2-web
+User=nobody
+Group=nogroup
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

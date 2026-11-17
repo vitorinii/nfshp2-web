@@ -1,0 +1,19 @@
+# The game and everything made from it never go in the repository:
+# your game folder (copied from your disc by setup.sh: EA's copyrighted files),
+/game/
+# ZloiKILLER's port (setup.sh fetches it) and the C++ translated from the game, which lives in it (upstream/work/),
+/upstream/
+# and the compiled module.
+/build/
+
+# Tools and logs
+/deps/
+/logs/
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local notes for Claude Code
+CLAUDE.md
+.claude/

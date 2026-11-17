@@ -1,0 +1,769 @@
+diff --git a/recomp/runtime/eefloat.h b/recomp/runtime/eefloat.h
+index c984e34..7766e79 100644
+--- a/recomp/runtime/eefloat.h
++++ b/recomp/runtime/eefloat.h
+@@ -27,6 +27,7 @@
+ #include <cstring>
+ #include <cmath>
+ #include <atomic>
++#include "eefloat_soft.h"
+ #if defined(__SSE2__)
+ #include <emmintrin.h>
+ #endif
+@@ -87,7 +88,7 @@ static inline float ee_add_fast(float a, float b)
+     const int sy = d > 24 ? 31 : d - 1, sx = d < -24 ? 31 : -d - 1;
+     y &= d > 0 ? ~0u << sy : ~0u;
+     x &= d < 0 ? ~0u << sx : ~0u;
+-    return fclamp(ee_float(x) + ee_float(y));
++    return fclamp(ee_hadd(ee_float(x), ee_float(y)));
+ #else
+     return fclamp(a + b);
+ #endif
+@@ -239,7 +240,7 @@ static inline float ee_mul_fast(float a, float b)
+ #ifdef EE_COUNT
+     ee_count_site(1);
+ #endif
+-    const float r = fclamp(a * b);
++    const float r = fclamp(ee_hmul(a, b));
+ #ifndef EE_HOST_MUL
+     const uint32_t x = ee_bits(a), y = ee_bits(b);
+     // the product's bits 15..22 first (they are the raw words' product's too): all zero once in 256, the rest of the test only then
+@@ -358,12 +359,12 @@ static inline float ee_div_fast(float a, float b)
+     // times d, so no division: about 43 % of the divisions are the host's.
+     if (ex - 1 < 254 && ey - 1 < 254) {
+         const double d = 1.0 + (double)(y & 0x7fffff) * 0x1p-23, fd = ((double)ee_past_ulp((double)a / (double)b) * 0x1p-29 + 0.01) * d;
+-        if ((x & 0x7fffff) >= (y & 0x7fffff) ? fd < d - 0.5 : d <= 1.5 ? fd < d - 1.0 : fd < 0.5) return fclamp(a / b);
++        if ((x & 0x7fffff) >= (y & 0x7fffff) ? fd < d - 0.5 : d <= 1.5 ? fd < d - 1.0 : fd < 0.5) return fclamp(ee_hdiv(a, b));
+     }
+     // a power of two over y (a third of these in a race, mostly 1 / y): the recurrence's quotient depends on y's mantissa alone, and is
+     // the host's or one ulp more; that is learnt once for each mantissa. Only where the host's quotient is normal, as the EE's then is.
+     if (!(x & 0x7fffff) && ex - 1 < 254 && ey - 1 < 254 && g_ee_tables.load(std::memory_order_acquire)) {
+-        const uint32_t hb = ee_bits(a / b), i = y & 0x7fffff;
++        const uint32_t hb = ee_bits(ee_hdiv(a, b)), i = y & 0x7fffff;
+         if ((hb >> 23 & 255) - 1 < 254) return ee_float(hb + (g_ee_recip_up[i >> 3] >> (i & 7) & 1u));
+     }
+     // the recurrence, unless these operands had it lately (a race repeats a third of its divisions). Normal numbers only, so an empty
+@@ -391,11 +392,11 @@ static inline float ee_sqrt_fast(float a)
+     // the root's mantissa depends on the operand's 23 bits and its exponent's lowest alone: the host's or one ulp more (the table)
+     if ((x >> 23 & 255) - 1 < 254 && g_ee_tables.load(std::memory_order_acquire)) {
+         const uint32_t i = x & 0xffffff;
+-        return ee_float(ee_bits(std::sqrt(std::fabs(a))) + (g_ee_sqrt_up[i >> 3] >> (i & 7) & 1u));
++        return ee_float(ee_bits(ee_hsqrt(std::fabs(a))) + (g_ee_sqrt_up[i >> 3] >> (i & 7) & 1u));
+     }
+     // before the table: the host's root where the fraction past the ulp is small, else the recurrence
+     const uint32_t limit = (x & 0x800000) ? (uint32_t)(0.45 * (1 << 29)) : (uint32_t)(0.60 * (1 << 29));
+-    if ((x & 0x7f800000) && ee_past_ulp(std::sqrt(std::fabs((double)a))) < limit) return std::sqrt(std::fabs(a));
++    if ((x & 0x7f800000) && ee_past_ulp(std::sqrt(std::fabs((double)a))) < limit) return ee_hsqrt(std::fabs(a));
+     return ee_sqrt_srt(a);
+ #else
+     return std::sqrt(std::fabs(a));
+@@ -466,7 +467,7 @@ static inline ee_v4f ee_add4_fast(ee_v4f a, ee_v4f b)
+     y &= ~0u << sy;
+     x &= ~0u << sx;
+ #endif
+-    return ee_clamp4((ee_v4f)x + (ee_v4f)y);
++    return ee_clamp4(ee_hadd4((ee_v4f)x, (ee_v4f)y));
+ #else
+     return ee_clamp4(a + b);
+ #endif
+@@ -488,7 +489,7 @@ static inline ee_v4f ee_sub4(ee_v4f a, ee_v4f b) { return ee_add4(a, (ee_v4f)((e
+ static inline ee_v4f ee_mul4_fast(ee_v4f a, ee_v4f b)
+ {
+     EE_N(5);
+-    ee_v4f r = ee_clamp4(a * b);
++    ee_v4f r = ee_clamp4(ee_hmul4(a, b));
+ #ifndef EE_HOST_MUL
+     const ee_v4u x = (ee_v4u)a, y = (ee_v4u)b;
+     // bits 15..22 of each lane's product all zero: once in 256, and only then the lanes are looked at one by one
+@@ -534,11 +535,11 @@ static inline void ee_tables_build()
+ {
+     for (uint32_t i = 0; i < (1u << 23); i++) {
+         const float y = ee_float(0x3f800000u | i), q = ee_div_srt(1.0f, y);
+-        if (ee_bits(q) != ee_bits(1.0f / y)) g_ee_recip_up[i >> 3] |= (uint8_t)(1u << (i & 7));
++        if (ee_bits(q) != ee_bits(ee_hdiv(1.0f, y))) g_ee_recip_up[i >> 3] |= (uint8_t)(1u << (i & 7));
+     }
+     for (uint32_t i = 0; i < (1u << 24); i++) {
+         const float x = ee_float((i >> 23 ? 127u : 128u) << 23 | (i & 0x7fffff)), r = ee_sqrt_srt(x);
+-        if (ee_bits(r) != ee_bits(std::sqrt(x))) g_ee_sqrt_up[i >> 3] |= (uint8_t)(1u << (i & 7));
++        if (ee_bits(r) != ee_bits(ee_hsqrt(x))) g_ee_sqrt_up[i >> 3] |= (uint8_t)(1u << (i & 7));
+     }
+     g_ee_tables.store(true, std::memory_order_release);
+ }
+diff --git a/recomp/runtime/native.cpp b/recomp/runtime/native.cpp
+index 2b7dfc3..2df88f9 100644
+--- a/recomp/runtime/native.cpp
++++ b/recomp/runtime/native.cpp
+@@ -542,7 +542,10 @@ static StripSlot *strip_slot(const StripKey &key)
+ {
+     if (g_strip_slots.empty()) g_strip_slots.resize(1u << 17);
+     const size_t mask = g_strip_slots.size() - 1;
+-    for (size_t i = StripKeyHash()(key) >> 20 & mask;; i = (i + 1) & mask) {
++    // the slot from the 64-bit hash: with a 32-bit size_t (wasm32) StripKeyHash's value keeps 32 bits, and >> 20 of those left 12, every
++    // strip in 4096 slots
++    const u64 h = key.a ^ key.b * 0x9E3779B97F4A7C15ull;
++    for (size_t i = (size_t)(h >> 20) & mask;; i = (i + 1) & mask) {
+         StripSlot &s = g_strip_slots[i];
+         if (s.generation != g_strip_generation || s.key == key) return &s;
+     }
+diff --git a/recomp/runtime/pad_host.cpp b/recomp/runtime/pad_host.cpp
+new file mode 100644
+index 0000000..b6e3da9
+--- /dev/null
++++ b/recomp/runtime/pad_host.cpp
+@@ -0,0 +1,82 @@
++// The gamepads outside Windows: what the page's Gamepad API saw, from the host's input block (host_input.h), made into pad.h's PadState
++// the same way pad.cpp makes SDL's (its dead zones, the steering's sensitivity, the triggers' threshold). The motors are the page's: the
++// game's wish is left in the block.
++#include "pad.h"
++
++#include "host_input.h"
++#include "pcconfig.h"
++
++#include <atomic>
++#include <cmath>
++#include <cstdint>
++
++namespace {
++
++std::atomic<bool> g_rumble_quiet;
++std::atomic<bool> g_rumble_off[2];
++
++// an SDL axis (-32768..32767) as a DualShock axis, with a dead zone (pad.cpp's)
++uint8_t axis(int v, int dead, int sensitivity = 100)
++{
++    if (v > -dead && v < dead) return 0x80;
++    int s = v < 0 ? -1 : 1, m = (v < 0 ? -v : v) - dead;
++    float t = (float)m / (float)(32768 - dead);
++    if (sensitivity != 100) t = powf(t, 100.0f / (float)sensitivity);
++    int out = 0x80 + s * (int)(t * 128);
++    return (uint8_t)(out < 0 ? 0 : out > 255 ? 255 : out);
++}
++
++// field by field: the page writes each as a whole word (a struct this size has no lock-free load, and wasm no libatomic)
++HostPad seen(int slot)
++{
++    const HostPad &in = host_input().pads[slot & 1];
++    HostPad p;
++    const int32_t *from = (const int32_t *)&in;
++    int32_t *to = (int32_t *)&p;
++    for (size_t i = 0; i < sizeof(HostPad) / 4; i++) to[i] = __atomic_load_n(from + i, __ATOMIC_ACQUIRE);
++    return p;
++}
++
++}   // namespace
++
++void pad_virtual(int, bool, bool) {}
++
++int pad_count()
++{
++    return (seen(0).ok ? 1 : 0) + (seen(1).ok ? 1 : 0);
++}
++
++PadState pad_read(int slot)
++{
++    PadState ps;
++    const HostPad r = seen(slot);
++    if (!r.ok) return ps;
++    ps.ok = true;
++    ps.mask = r.mask & 0xffff;
++    ps.lt = (uint8_t)((r.lt < 0 ? 0 : r.lt > 32767 ? 32767 : r.lt) * 255 / 32767);
++    ps.rt = (uint8_t)((r.rt < 0 ? 0 : r.rt > 32767 ? 32767 : r.rt) * 255 / 32767);
++    if (ps.lt > 30) ps.mask |= 0x10000;
++    if (ps.rt > 30) ps.mask |= 0x20000;
++    const int kRightDead = 8689;
++    int dead = g_cfg.pad_deadzone * 32768 / 100;
++    ps.sticks[0] = axis(r.axis[0], kRightDead);
++    ps.sticks[1] = axis(r.axis[1], kRightDead);
++    ps.sticks[2] = axis(r.axis[2], dead, g_pad_steering_now);
++    ps.sticks[3] = axis(r.axis[3], dead);
++    return ps;
++}
++
++bool pad_is_playstation(int slot) { return seen(slot).playstation != 0; }
++
++void pad_rumble_quiet(bool quiet) { g_rumble_quiet = quiet; }
++void pad_rumble_gate(int slot, bool on) { g_rumble_off[slot & 1] = !on; }
++
++void pad_rumble(int slot, int small_on, int large)
++{
++    HostPad &p = host_input().pads[slot & 1];
++    const bool off = g_rumble_quiet || g_rumble_off[slot & 1];
++    __atomic_store_n(&p.rumble_small, off ? 0 : (small_on ? 1 : 0), __ATOMIC_RELAXED);
++    __atomic_store_n(&p.rumble_large, off ? 0 : (large & 255), __ATOMIC_RELAXED);
++}
++
++void pad_settle(int) {}
+diff --git a/recomp/runtime/pcconfig.cpp b/recomp/runtime/pcconfig.cpp
+index 8611e16..eb470fa 100644
+--- a/recomp/runtime/pcconfig.cpp
++++ b/recomp/runtime/pcconfig.cpp
+@@ -152,7 +152,6 @@ const char *pc_button_action(int b) { return b >= 0 && b < PCB_COUNT ? kActions[
+ std::string pc_key_name(int vk)
+ {
+     if (!vk) return "-";
+-#ifdef _WIN32
+     static const struct { int vk; const char *name; } special[] = {
+         {0x08, "Backspace"}, {0x09, "Tab"}, {0x0D, "Enter"}, {0x10, "Shift"}, {0x11, "Ctrl"}, {0x12, "Alt"},
+         {0x14, "Caps Lock"}, {0x1B, "Esc"}, {0x20, "Space"}, {0x21, "Page Up"}, {0x22, "Page Down"},
+@@ -163,6 +162,16 @@ std::string pc_key_name(int vk)
+         if (s.vk == vk) return s.name;
+     if (vk >= 0x60 && vk <= 0x69) return "Num " + std::to_string(vk - 0x60);
+     if (vk >= 0x70 && vk <= 0x87) return "F" + std::to_string(vk - 0x6F);
++#ifndef _WIN32
++    // no keyboard layout to ask: the US names, as the browser's codes are
++    if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) return std::string(1, (char)vk);
++    static const struct { int vk; const char *name; } more[] = {
++        {0x5B, "Win"}, {0x5C, "Win"}, {0x6A, "Num *"}, {0x6B, "Num +"}, {0x6D, "Num -"}, {0x6E, "Num ."}, {0x6F, "Num /"},
++        {0xBA, ";"}, {0xBB, "="}, {0xBC, ","}, {0xBD, "-"}, {0xBE, "."}, {0xBF, "/"}, {0xC0, "`"}, {0xDB, "["}, {0xDC, "\\"},
++        {0xDD, "]"}, {0xDE, "'"}};
++    for (auto &s : more)
++        if (s.vk == vk) return s.name;
++#else
+     char name[64] = {};
+     UINT sc = MapVirtualKeyA((UINT)vk, MAPVK_VK_TO_VSC);
+     if (sc && GetKeyNameTextA((LONG)(sc << 16), name, sizeof name) > 0) return name;
+diff --git a/recomp/runtime/pcmenu.cpp b/recomp/runtime/pcmenu.cpp
+index 870a01b..0443108 100644
+--- a/recomp/runtime/pcmenu.cpp
++++ b/recomp/runtime/pcmenu.cpp
+@@ -1878,7 +1878,7 @@ static void mouse_frame()
+ // the name is typed on the keyboard; with a gamepad the game's letter grid opens, as on the PS2, and any pad works it for either player.
+ // The names live in Fred (0x2fc050): at +0x10d90, 1744 bytes on for player 2. tKeyboard's limit stays: 7 characters, which the race's HUD has room for.
+ static const u32 NAME_ROW_1 = 0x52e039f3, NAME_RED = 0x71450a81, NAME_BLUE = 0x71572302;
+-static const int NAME_BLURB = 356, NAME_MAX = 7;
++static const int NAME_BLURB = 356, NAME_MAX_CHARS = 7;
+ static const u32 kFredNames = 0x2fc050 + 0x10d90;
+ static bool g_name_typing;
+ static int g_name_player;
+diff --git a/recomp/runtime/pcplatform.cpp b/recomp/runtime/pcplatform.cpp
+index 4b565e9..fc71a83 100644
+--- a/recomp/runtime/pcplatform.cpp
++++ b/recomp/runtime/pcplatform.cpp
+@@ -2,8 +2,12 @@
+ //  - the strings: FE_ENGLISH's table is patched as it loads, so every reader gets the new text;
+ //  - the button icons: BUTTONSOUT's sheet is repainted with the keys or gamepad buttons bound,
+ //    in the game's own FONT_A, whenever the bindings or the device in use change.
++#ifdef _WIN32
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
++#else
++#include "win32_lite.h"
++#endif
+ #include "pclang.h"
+ #include "pcmenu.h"
+ #include "hw.h"
+@@ -811,6 +815,9 @@ void HOOK_GetData__13ReplayManagerii(Ctx &c, void (*orig)(Ctx &))
+ // TEMP: HP2_WATCH=<timer>,<hex address>: from the replay step of that timer on, every write to that word of the game's memory and the
+ // code that made it (a debug register of the game's thread; the place as an offset into speed.exe, for speed.map)
+ static u32 g_watch_addr, g_watch_timer;
++#ifndef _WIN32
++static void watch_step(u32 timer) { g_watch_timer = timer; }   // debug registers: Windows only
++#else
+ static LONG CALLBACK watch_hit(EXCEPTION_POINTERS *e)
+ {
+     if (e->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP || !(e->ContextRecord->Dr6 & 1)) return EXCEPTION_CONTINUE_SEARCH;
+@@ -848,6 +855,7 @@ static void watch_step(u32 timer)
+     CloseHandle(helper), CloseHandle(me);
+     fprintf(stderr, "watch: armed on %08x at timer %u\n", g_watch_addr, timer);
+ }
++#endif
+ 
+ void HOOK_VerifyDebugChecksums__5World(Ctx &c, void (*orig)(Ctx &))
+ {
+diff --git a/recomp/runtime/ps2.h b/recomp/runtime/ps2.h
+index 21c8c49..b68a9da 100644
+--- a/recomp/runtime/ps2.h
++++ b/recomp/runtime/ps2.h
+@@ -457,7 +457,7 @@ static inline void FPU_cvt_w_s(Ctx &c, int d, int s, int)
+ #endif
+     c.f[d].u = v >= 2147483647.0f ? 0x7FFFFFFFu : v <= -2147483648.0f ? 0x80000000u : (u32)(s32)v;
+ }
+-static inline void FPU_cvt_s_w(Ctx &c, int d, int s, int) { F(d) = (float)(s32)c.f[s].u; }
++static inline void FPU_cvt_s_w(Ctx &c, int d, int s, int) { F(d) = ee_hi2f((s32)c.f[s].u); }
+ static inline void fcond(Ctx &c, bool b) { c.fcr31 = b ? (c.fcr31 | FCR31_C) : (c.fcr31 & ~FCR31_C); }
+ static inline void FPU_c_f_s(Ctx &c, int, int, int) { fcond(c, false); }
+ static inline void FPU_c_eq_s(Ctx &c, int, int s, int t) { fcond(c, EE_EQ(F(s), F(t))); }
+@@ -495,7 +495,7 @@ static inline void FPL_cvt_w_s(Ctx &, FPR &d, const FPR &s, const FPR &)
+ #endif
+     d.u = v >= 2147483647.0f ? 0x7FFFFFFFu : v <= -2147483648.0f ? 0x80000000u : (u32)(s32)v;
+ }
+-static inline void FPL_cvt_s_w(Ctx &, FPR &d, const FPR &s, const FPR &) { d.f = (float)(s32)s.u; }
++static inline void FPL_cvt_s_w(Ctx &, FPR &d, const FPR &s, const FPR &) { d.f = ee_hi2f((s32)s.u); }
+ static inline void FPL_c_f_s(Ctx &c, FPR &, const FPR &, const FPR &) { fcond(c, false); }
+ static inline void FPL_c_eq_s(Ctx &c, FPR &, const FPR &s, const FPR &t) { fcond(c, EE_EQ(s.f, t.f)); }
+ static inline void FPL_c_lt_s(Ctx &c, FPR &, const FPR &s, const FPR &t) { fcond(c, EE_LT(s.f, t.f)); }
+@@ -739,7 +739,7 @@ static inline void VU_vclipw(Ctx &c, u32 w)
+     static inline void VU_vitof##n(Ctx &c, u32 w)                                   \
+     {                                                                               \
+         VF a = c.vf[VFS(w)];                                                        \
+-        for (int i = 0; i < 4; i++) if (dx(VDEST(w), i)) vf_set(c, VFT(w), i, (float)(s32)a.u[i] / (1 << sh)); \
++        for (int i = 0; i < 4; i++) if (dx(VDEST(w), i)) vf_set(c, VFT(w), i, ee_hdiv(ee_hi2f((s32)a.u[i]), (float)(1 << sh))); \
+     }
+ VU_FTOI(0, 0) VU_FTOI(4, 4) VU_FTOI(12, 12) VU_FTOI(15, 15)
+ static inline void VU_vlqi(Ctx &c, u32 w)
+diff --git a/recomp/runtime/window.cpp b/recomp/runtime/window_host.cpp
+similarity index 71%
+copy from recomp/runtime/window.cpp
+copy to recomp/runtime/window_host.cpp
+index be071b9..88b9e3e 100644
+--- a/recomp/runtime/window.cpp
++++ b/recomp/runtime/window_host.cpp
+@@ -1,4 +1,6 @@
+-// The Win32 window, the keyboard and the gamepads. The renderer draws to the window itself (native_vk.cpp).
++// The keyboard, the mouse and the gamepads outside Windows: window.cpp's bindings and menus as they are, with the window's messages
++// replaced by the host's input block (host_input.h), which the page writes (web) or nobody does (a headless run, driven by
++// HP2_KEYSCRIPT / HP2_AUTOPRESS as on Windows). The picture is the page's canvas: its size and fullscreen are the page's.
+ #include "hw.h"
+ #include "pcconfig.h"
+ #include "host.h"
+@@ -7,54 +9,42 @@
+ #include "native.h"
+ #include <array>
+ 
+-#define WIN32_LEAN_AND_MEAN
+-#include <windows.h>
++#include "win32_lite.h"
+ 
+ #include <cmath>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+ #include <atomic>
++#include <mutex>
+ #include <thread>
+ #include <vector>
+ 
++// ---- the input block ----------------------------------------------------------------------
++static HostInput g_host_input = [] {
++    HostInput in = {};
++    in.magic = HOST_INPUT_MAGIC;
++    in.version = HOST_INPUT_VERSION;
++    in.size = sizeof(HostInput);
++    in.mouse_x = in.mouse_y = -1;
++    return in;
++}();
++HostInput &host_input() { return g_host_input; }
++
++// What the Windows build asks of its window: "there is one" (non-null) and "it has the keyboard" (the page is focused). A headless run
++// (HP2_NOWINDOW) has none, as on Windows.
+ static HWND g_hwnd;
+-static bool g_fullscreen;               // borderless, on the window's monitor
+-static RECT g_windowed_rect;
+-static std::atomic<bool> g_want_fullscreen;
+-static const UINT WM_SETFULLSCREEN = WM_APP + 1;
+-static const UINT WM_SETWINDOWSIZE = WM_APP + 2;
+-static const UINT WM_CURSORSTATE = WM_APP + 3;
++static bool foreground() { return g_hwnd && __atomic_load_n(&g_host_input.focused, __ATOMIC_RELAXED) != 0; }
++
+ // set when a setting changed from the keyboard (Alt+Enter): the menu shows the new value
+ std::atomic<bool> g_pc_ui_dirty;
+ 
+-// borderless fullscreen on the monitor the window is on, and back; on the window's thread
+-static void set_fullscreen_now(bool fs)
+-{
+-    if (!g_hwnd || fs == g_fullscreen) return;
+-    if (fs) {
+-        GetWindowRect(g_hwnd, &g_windowed_rect);
+-        MONITORINFO mi = {sizeof mi};
+-        GetMonitorInfoA(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+-        SetWindowLongA(g_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+-        SetWindowPos(g_hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+-                     mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+-    } else {
+-        SetWindowLongA(g_hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+-        SetWindowPos(g_hwnd, HWND_NOTOPMOST, g_windowed_rect.left, g_windowed_rect.top,
+-                     g_windowed_rect.right - g_windowed_rect.left, g_windowed_rect.bottom - g_windowed_rect.top,
+-                     SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+-    }
+-    g_fullscreen = fs;
+-}
+-
+-// from any thread; the setting is saved, and the menu told
++// The page owns fullscreen and the canvas: the settings are kept for the menu to show, the page asked through the block's size
+ void window_set_fullscreen(bool fs)
+ {
+     g_cfg.fullscreen = fs;
+     pc_config_save();
+     g_pc_ui_dirty = true;
+-    if (g_hwnd) PostMessageA(g_hwnd, WM_SETFULLSCREEN, fs, 0);
+ }
+ 
+ void window_set_size(int w, int h)
+@@ -62,94 +52,34 @@ void window_set_size(int w, int h)
+     g_cfg.win_w = w;
+     g_cfg.win_h = h;
+     pc_config_save();
+-    if (g_hwnd) PostMessageA(g_hwnd, WM_SETWINDOWSIZE, 0, 0);
+ }
+ 
+ void *window_handle() { return g_hwnd; }
+ 
+ void window_screen_size(int &w, int &h)
+ {
+-    MONITORINFO mi = {sizeof mi};
+-    HMONITOR mon = g_hwnd ? MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST) : MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+-    if (GetMonitorInfoA(mon, &mi)) {
+-        w = mi.rcMonitor.right - mi.rcMonitor.left;
+-        h = mi.rcMonitor.bottom - mi.rcMonitor.top;
+-    } else {
+-        w = GetSystemMetrics(SM_CXSCREEN);
+-        h = GetSystemMetrics(SM_CYSCREEN);
+-    }
++    w = g_host_input.view_w > 0 ? g_host_input.view_w : 1280;
++    h = g_host_input.view_h > 0 ? g_host_input.view_h : 720;
+ }
+ 
+-void window_view_size(int &w, int &h)
+-{
+-    if (g_cfg.fullscreen) {
+-        window_screen_size(w, h);
+-    } else {
+-        w = g_cfg.win_w;
+-        h = g_cfg.win_h;
+-    }
+-}
++void window_view_size(int &w, int &h) { window_screen_size(w, h); }
+ 
++// Changing the profile restarts the game on Windows; here the page reloads it (the profile is named in the block's answer)
+ void window_relaunch(const std::string &profile)
+ {
+-    char path[MAX_PATH];
+-    GetModuleFileNameA(nullptr, path, MAX_PATH);
+-    SetEnvironmentVariableA("HP2_PROFILE", profile.c_str());
+-    // The new one starts as from the desktop: no standard handles (this one's are the log's pipe, whose numbers mean nothing there), and
+-    // speed.log free for it to open.
+-    host_log_close();
+-    STARTUPINFOA si = {};
+-    si.cb = sizeof si;
+-    si.dwFlags = STARTF_USESTDHANDLES;
+-    PROCESS_INFORMATION pi = {};
+-    if (CreateProcessA(path, nullptr, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+-        CloseHandle(pi.hThread);
+-        CloseHandle(pi.hProcess);
+-        ExitProcess(0);
+-    }
+-    SetEnvironmentVariableA("HP2_PROFILE", nullptr);
++    fprintf(stderr, "window: relaunch with profile %s asked (not supported here)\n", profile.c_str());
+ }
+ 
+ void window_quit()
+ {
+-    if (g_hwnd) PostMessageA(g_hwnd, WM_CLOSE, 0, 0);
+-    else ExitProcess(0);
++    host_log_flush();
++    fflush(nullptr);
++    _exit(0);
+ }
+ 
+-// the pointer shows in the menus; data\ui\cursor.cur or cursor.ani (beside the program, or under HP2_DATA) replaces the arrow
++// the pointer: the page shows its own while g_cursor_on (host_cursor_wanted)
+ static std::atomic<bool> g_cursor_on{false};    // not till a screen asks for it and the mouse moves (window_pad)
+-static HCURSOR menu_cursor()
+-{
+-    static HCURSOR c = [] {
+-        char path[MAX_PATH];
+-        DWORD n;
+-        if (const char *data = getenv("HP2_DATA")) {
+-            n = (DWORD)snprintf(path, MAX_PATH, "%s\\", data);
+-        } else {
+-            n = GetModuleFileNameA(nullptr, path, MAX_PATH);
+-            while (n && path[n - 1] != '\\' && path[n - 1] != '/') n--;
+-        }
+-        for (const char *name : {"data\\ui\\cursor.cur", "data\\ui\\cursor.ani"}) {
+-            snprintf(path + n, MAX_PATH - n, "%s", name);
+-            if (HCURSOR own = LoadCursorFromFileA(path)) return own;
+-        }
+-        return LoadCursor(nullptr, IDC_ARROW);
+-    }();
+-    return c;
+-}
+-
+-// Hidden over all of the window, the title bar too, while it is in front; SetCursor alone covers the client area and only from the next message.
+-static void apply_cursor(HWND h)
+-{
+-    static bool hidden;
+-    const bool hide = !g_cursor_on && GetForegroundWindow() == h;
+-    if (hide != hidden) {
+-        const int count = ShowCursor(hide ? FALSE : TRUE);
+-        hidden = hide;
+-        if (getenv("HP2_NATIVELOG")) fprintf(stderr, "cursor: %s, count %d\n", hide ? "hidden" : "shown", count);
+-    }
+-    SetCursor(g_cursor_on ? menu_cursor() : nullptr);
+-}
++bool host_cursor_wanted() { return g_cursor_on; }
+ 
+ // ---- typing a name ------------------------------------------------------------------------
+ static std::atomic<bool> g_text_on, g_text_script_fresh;
+@@ -188,8 +118,11 @@ static int text_char(int vk, bool shift)
+     return 0;
+ }
+ 
++static void host_events_poll();
++
+ int window_text_next()
+ {
++    host_events_poll();
+     const unsigned at = g_text_out;
+     if (at == g_text_in) return 0;
+     const int ch = (unsigned char)g_text_ring[at % sizeof g_text_ring];
+@@ -244,81 +177,55 @@ int window_input_kind() { return g_input_kind; }
+ static std::atomic<unsigned long long> g_mouse_at;
+ static void mouse_used() { g_mouse_at = GetTickCount64() | 1; }
+ 
+-static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+-{
+-    switch (m) {
+-    // Any new press on the keyboard or the mouse says the player has moved to them (a repeat says nothing, nor do the system's Alt and Win).
+-    case WM_KEYDOWN:
+-        if (!(lp & 1 << 30) && wp != VK_LWIN && wp != VK_RWIN) g_input_kind = 0, g_mouse_at = 0;
+-        if (g_text_on)
+-            if (const int ch = text_char((int)wp, (GetKeyState(VK_SHIFT) & 0x8000) != 0))
+-                if ((ch != 13 || g_text_enter_free) && (ch != 27 || g_text_esc_free)) text_push(ch);
+-        if (!g_text_on && g_text_armed && !(lp & 1 << 30))
+-            if (const int ch = text_char((int)wp, (GetKeyState(VK_SHIFT) & 0x8000) != 0))
+-                if (ch >= 32 && ch < 127) text_push(ch);
+-        break;
+-    case WM_KEYUP:
+-        if (wp == VK_RETURN) g_text_enter_free = true;
+-        if (wp == VK_ESCAPE) g_text_esc_free = true;
+-        break;
+-    case WM_MOUSEMOVE: {
+-        // Windows sends one when a window comes up under a pointer that stands still: only a new place is a move
+-        static LPARAM last = -1;
+-        if (lp != last) {
+-            if (last != -1) mouse_used();
+-            last = lp;
++// What wndproc did with the window's messages, from the block: the key presses in order (typing, the device in use), the wheel's
++// notches, the mouse's moves and clicks, the page's focus. Called on every read of the pad and of the typed text, from the game's thread.
++static void host_events_poll()
++{
++    HostInput &in = g_host_input;
++    static std::mutex mx;
++    std::lock_guard<std::mutex> lock(mx);
++    const uint32_t head = __atomic_load_n(&in.ev_head, __ATOMIC_ACQUIRE);
++    uint32_t tail = in.ev_tail;
++    if (head - tail > 64) tail = head - 64;         // the page ran ahead: the oldest are gone
++    for (; tail != head; tail++) {
++        const HostKeyEvent e = in.ev[tail % 64];
++        const int vk = e.vk & 255;
++        if (e.down) {
++            // Any new press on the keyboard says the player has moved to it (a repeat says nothing, nor does the system's Win)
++            if (!e.repeat && vk != VK_LWIN && vk != VK_RWIN) g_input_kind = 0, g_mouse_at = 0;
++            const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
++            if (g_text_on)
++                if (const int ch = text_char(vk, shift))
++                    if ((ch != 13 || g_text_enter_free) && (ch != 27 || g_text_esc_free)) text_push(ch);
++            if (!g_text_on && g_text_armed && !e.repeat)
++                if (const int ch = text_char(vk, shift))
++                    if (ch >= 32 && ch < 127) text_push(ch);
++        } else {
++            if (vk == VK_RETURN) g_text_enter_free = true;
++            if (vk == VK_ESCAPE) g_text_esc_free = true;
+         }
+-        break;
+     }
+-    case WM_MOUSEWHEEL:
+-        g_input_kind = 0;
+-        mouse_used();
+-        g_wheel += GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 1 : -1;
+-        if (g_wheel > 4) g_wheel = 4;
+-        if (g_wheel < -4) g_wheel = -4;
+-        return 0;
+-    case WM_LBUTTONDOWN:
+-    case WM_RBUTTONDOWN:
+-    case WM_MBUTTONDOWN:
++    __atomic_store_n(&in.ev_tail, tail, __ATOMIC_RELEASE);
++    // the mouse: a move or a click says it is in use
++    static int32_t moves = -1, wheel = 0, buttons = 0;
++    const int32_t m = __atomic_load_n(&in.mouse_moves, __ATOMIC_RELAXED);
++    if (m != moves) {
++        if (moves != -1) mouse_used();
++        moves = m;
++    }
++    const int32_t b = __atomic_load_n(&in.mouse_buttons, __ATOMIC_RELAXED);
++    if (b & ~buttons) g_input_kind = 0, mouse_used();
++    buttons = b;
++    const int32_t w = __atomic_load_n(&in.wheel, __ATOMIC_RELAXED);
++    if (w != wheel) {
+         g_input_kind = 0;
+         mouse_used();
+-        break;
+-    case WM_SYSKEYDOWN:
+-        if (wp == VK_RETURN && !(lp & 1 << 30)) {                   // Alt+Enter
+-            window_set_fullscreen(!g_cfg.fullscreen);
+-            return 0;
+-        }
+-        break;
+-    case WM_SETWINDOWSIZE:
+-        if (!g_cfg.fullscreen) {
+-            RECT r = {0, 0, g_cfg.win_w, g_cfg.win_h};
+-            AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+-            SetWindowPos(h, nullptr, 0, 0, r.right - r.left, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER);
+-        }
+-        return 0;
+-    case WM_SETFULLSCREEN:
+-        set_fullscreen_now(wp != 0);
+-        return 0;
+-    case WM_CURSORSTATE:
+-        apply_cursor(h);
+-        return 0;
+-    case WM_ACTIVATE:
+-        apply_cursor(h);
+-        pad_rumble_quiet(LOWORD(wp) == WA_INACTIVE);    // a pad does not shake for a game behind another window
+-        break;
+-    case WM_SETCURSOR:
+-        if (LOWORD(lp) == HTCLIENT) {
+-            apply_cursor(h);
+-            return TRUE;
+-        }
+-        break;
+-    case WM_DESTROY:
+-        window_rumble(0, 0);            // a pad's motors outlive the program
+-        pad_settle(150);                // the pads' thread tells them
+-        host_log_flush();
+-        ExitProcess(0);
+-    }
+-    return DefWindowProcA(h, m, wp, lp);
++        int notches = g_wheel + (w - wheel);
++        g_wheel = notches > 4 ? 4 : notches < -4 ? -4 : notches;
++        wheel = w;
++    }
++    // a pad does not shake for a page behind another window
++    pad_rumble_quiet(!foreground());
+ }
+ 
+ // ---- the mouse ---------------------------------------------------------------------
+@@ -348,19 +255,21 @@ bool window_mouse(float &x, float &y, bool &left)
+         return any;
+     }
+     left = false;
+-    if (!g_hwnd || GetForegroundWindow() != g_hwnd) return false;
++    host_events_poll();
++    if (!foreground()) return false;
+     left = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+-    POINT p;
+-    RECT r;
+-    if (!GetCursorPos(&p) || !ScreenToClient(g_hwnd, &p) || !GetClientRect(g_hwnd, &r) || r.right <= 0 || r.bottom <= 0) return false;
+-    // the box the picture is shown in (native_vk.cpp, blit_to_window)
++    const HostInput &in = g_host_input;
++    const float cw = (float)(in.view_w > 0 ? in.view_w : 1280), ch = (float)(in.view_h > 0 ? in.view_h : 720);
++    if (in.mouse_x < 0 || in.mouse_y < 0) return false;
++    const float px = in.mouse_x * cw, py = in.mouse_y * ch;
++    // the box the picture is shown in (the page draws it as native_vk.cpp's blit_to_window did)
+     float f = pc_racing() ? native_narrow() : 1.0f;
+     float aspect = (4.0f / 3.0f) / f;
+-    float bw = (float)r.right, bh = (float)r.bottom;
++    float bw = cw, bh = ch;
+     if (bw > bh * aspect) bw = bh * aspect;
+     else bh = bw / aspect;
+-    float bx = (r.right - bw) / 2, by = (r.bottom - bh) / 2;
+-    float fx = (p.x - bx) / bw, fy = (p.y - by) / bh;
++    float bx = (cw - bw) / 2, by = (ch - bh) / 2;
++    float fx = (px - bx) / bw, fy = (py - by) / bh;
+     x = 256 + (fx * 512 - 256) / f;
+     y = fy * 444;
+     return fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1;
+@@ -424,7 +333,7 @@ bool window_delete_pressed()
+ {
+     static bool was;
+     bool now = false;
+-    if (g_hwnd && (g_key_script_on || GetForegroundWindow() == g_hwnd)) {
++    if (g_hwnd && (g_key_script_on || foreground())) {
+         const PadState a = pad_read(0), b = pad_read(1);      // either gamepad, as the menus take them
+         now = key(VK_DELETE) || (a.ok && (a.mask & 0x4000)) || (b.ok && (b.mask & 0x4000));
+     }
+@@ -549,7 +458,7 @@ void window_cursor_frame()
+     }
+     if (g_cursor_on != cursor) {
+         g_cursor_on = cursor;
+-        PostMessageA(g_hwnd, WM_CURSORSTATE, 0, 0);
++        __atomic_store_n(&g_host_input.cursor_wanted, cursor ? 1 : 0, __ATOMIC_RELAXED);
+         if (log) fprintf(stderr, "pointer: %s at %.1f s\n", cursor ? "wanted" : "not wanted", GetTickCount64() % 1000000 / 1000.0);
+     }
+ }
+@@ -614,7 +523,7 @@ u16 window_pad(u8 sticks[4], u8 pressure[12])
+         return 0xFFFF;
+     }
+     key_script_step();
+-    if (!g_hwnd || (!g_key_script_on && GetForegroundWindow() != g_hwnd)) return 0xFFFF;
++    if (!g_hwnd || (!g_key_script_on && !foreground())) return 0xFFFF;
+     static bool esc_held;                  // from cancelling a capture: not a press yet
+     if (g_cap) {
+         esc_held = true;
+@@ -792,7 +701,7 @@ u16 window_pad2(u8 sticks[4], u8 pressure[12])
+ {
+     sticks[0] = sticks[1] = sticks[2] = sticks[3] = 0x80;
+     memset(pressure, 0, 12);
+-    if (!g_hwnd || g_cap || (!g_key_script_on && GetForegroundWindow() != g_hwnd)) return 0xFFFF;
++    if (!g_hwnd || g_cap || (!g_key_script_on && !foreground())) return 0xFFFF;
+     u16 buttons = 0xFFFF;
+     auto press = [&](int b, int amount) {
+         buttons &= ~(1u << kPadBit[b].bit);
+@@ -831,59 +740,15 @@ u16 window_pad2(u8 sticks[4], u8 pressure[12])
+     return buttons;
+ }
+ 
+-// The process takes the screen's real pixels, whatever the screen's scaling: the window's client size is then the swapchain's on every
+-// driver, and the fullscreen window is the monitor's own size. Said here and not left to what else is in the process (a driver, an overlay,
+-// the system's compatibility settings): a window Windows scales by itself is drawn at another size than it has, and each driver takes that
+-// its own way. The functions by name: they are Windows 10's.
+-int window_dpi_aware()
+-{
+-    HMODULE user = GetModuleHandleA("user32.dll");
+-    typedef void *(WINAPI *GetContext)();
+-    typedef int (WINAPI *FromContext)(void *);
+-    typedef BOOL (WINAPI *SetContext)(void *);
+-    const auto get = (GetContext)(void *)GetProcAddress(user, "GetThreadDpiAwarenessContext");
+-    const auto from = (FromContext)(void *)GetProcAddress(user, "GetAwarenessFromDpiAwarenessContext");
+-    const auto set = (SetContext)(void *)GetProcAddress(user, "SetProcessDpiAwarenessContext");
+-    const int was = get && from ? from(get()) : -1;
+-    if (!set || !set((void *)(INT_PTR)-4))                  // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+-        if (was < 1) SetProcessDPIAware();
+-    return was;
+-}
+-
+-// HP2_DPI=0 | 1, for tests: the window's thread and the renderer's as in a process Windows scales (unaware, or aware of the system's scaling
+-// only), which is what the port was on a scaled screen before it declared itself. Called at the start of each of the two threads.
+-void window_dpi_thread()
+-{
+-    const char *e = getenv("HP2_DPI");
+-    if (!e) return;
+-    typedef void *(WINAPI *SetThreadContext)(void *);
+-    if (const auto set = (SetThreadContext)(void *)GetProcAddress(GetModuleHandleA("user32.dll"), "SetThreadDpiAwarenessContext"))
+-        set((void *)(INT_PTR)(atoi(e) == 1 ? -2 : -1));
+-}
++// The page has its own pixels (devicePixelRatio): nothing to declare
++int window_dpi_aware() { return 2; }
++void window_dpi_thread() {}
+ 
++// "The window": the input block made known to the page, and the game told there is one (window_pad reads the keyboard only then)
+ void window_start()
+ {
+-    std::thread([] {
+-        window_dpi_thread();
+-        if (getenv("HP2_CURSORSTART")) g_cursor_on = true, mouse_used();    // for tests: as if the mouse had just been used on a screen before
+-        WNDCLASSA wc = {};
+-        wc.lpfnWndProc = wndproc;
+-        wc.hInstance = GetModuleHandleA(nullptr);
+-        wc.lpszClassName = "hp2recomp";
+-        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+-        wc.hIcon = LoadIconA(wc.hInstance, MAKEINTRESOURCEA(1));    // speed.rc
+-        wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+-        RegisterClassA(&wc);
+-        RECT r = {0, 0, g_cfg.win_w, g_cfg.win_h};
+-        AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+-        g_hwnd = CreateWindowA("hp2recomp", "Need for Speed: Hot Pursuit 2", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+-                               CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr,
+-                               nullptr, wc.hInstance, nullptr);
+-        if (g_cfg.fullscreen) set_fullscreen_now(true);
+-        MSG msg;
+-        while (GetMessageA(&msg, nullptr, 0, 0) > 0) {
+-            TranslateMessage(&msg);
+-            DispatchMessageA(&msg);
+-        }
+-    }).detach();
++    static int dummy;
++    if (getenv("HP2_CURSORSTART")) g_cursor_on = true, mouse_used();    // for tests: as if the mouse had just been used on a screen before
++    host_input_publish();
++    g_hwnd = &dummy;
+ }
