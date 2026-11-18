@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#050b14">
 <title>Hot Pursuit 2 Web</title>
@@ -43,6 +43,7 @@
       <div class="tabs" role="tablist">
         <button type="button" class="tab" role="tab" data-tab="keyboard">Keyboard</button>
         <button type="button" class="tab" role="tab" data-tab="pad">Controller</button>
+        <button type="button" class="tab" role="tab" data-tab="touch">Touch</button>
       </div>
       <ul class="keys pane" data-tab="keyboard" role="tabpanel">
         <li><span>Accelerate, brake and reverse</span><span><kbd>↑</kbd><kbd>↓</kbd></span></li>
@@ -71,7 +72,18 @@
         <li><span>Pause</span><span><kbd>Start</kbd></span></li>
         <li><span>Menus: choose, back</span><span><kbd>A</kbd><kbd>B</kbd></span></li>
       </ul>
-      <p class="hint">Plug in a controller and press one of its buttons. Keys and buttons can be changed in the game: Options, Controls.</p>
+      <ul class="keys pane" data-tab="touch" role="tabpanel" hidden>
+        <li><span>Accelerate, brake and reverse (a finger slides from one to the other)</span><span><kbd>Gas</kbd><kbd>Brake</kbd></span></li>
+        <li><span>Steer</span><span><kbd>◀</kbd><kbd>▶</kbd></span></li>
+        <li><span>Handbrake</span><span><kbd>Handbrake</kbd></span></li>
+        <li><span>Shift down, shift up (manual)</span><span><kbd>−</kbd><kbd>+</kbd></span></li>
+        <li><span>Change view, look back, horn, reset car</span><span><kbd>Camera</kbd><kbd>Look back</kbd><kbd>Horn</kbd><kbd>Reset</kbd></span></li>
+        <li><span>Pause, full screen</span><span><kbd>❚❚</kbd><kbd>⛶</kbd></span></li>
+        <li><span>Menus: tap them, or</span><span><kbd>◀</kbd><kbd>▲</kbd><kbd>▼</kbd><kbd>▶</kbd><kbd>OK</kbd><kbd>Back</kbd></span></li>
+        <li><span>A profile's name</span><span>the phone's keyboard</span></li>
+      </ul>
+      <p class="hint">Plug in a controller and press one of its buttons. Keys and buttons can be changed in the game: Options, Controls.
+        On a phone or tablet the touch controls show over the game: held sideways it fills the screen, upright the picture is on top.</p>
     </section>
   </div>
 
@@ -116,7 +128,7 @@
         <p><i>Need for Speed: Hot Pursuit 2</i> (2002), the PlayStation 2 version, in your browser. The game's own code is translated to
           C++ ahead of time and compiled to WebAssembly; WebGPU draws it and Web Audio plays it.</p>
         <p>The driving is the console's: the demo races recorded in the game replay with every one of their checks matching.</p>
-        <p>Needs the latest Chrome or Edge on a computer.</p>
+        <p>Needs the latest Chrome or Edge on a computer, or the latest Chrome on an Android phone.</p>
         <p>The site counts visits, plays and time played to see how it is doing: no cookies, and no addresses or anything about you
           kept.</p>
       </div>
@@ -149,6 +161,51 @@
 <div id="stage" hidden>
   <canvas id="screen" tabindex="0"></canvas>
   <div id="hud" class="hud"></div>
+  <!-- touch controls (touch.js): data-b is the controller part each one holds; data-scene picks the driving or the menus' set -->
+  <input id="type-box" class="type-box" type="text" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false"
+    enterkeyhint="done" maxlength="40" aria-label="The name to type" tabindex="-1">
+  <div id="touch" class="touch" data-scene="menu" hidden>
+    <button type="button" tabindex="-1" class="t-btn t-small t-kbd" data-b="ui-kbd" hidden>Keyboard</button>
+    <div class="t-row t-tl">
+      <button type="button" tabindex="-1" class="t-btn t-small" data-b="start" aria-label="Pause"><svg viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg></button>
+      <button type="button" tabindex="-1" class="t-btn t-small" data-b="ui-full" aria-label="Full screen"><svg viewBox="0 0 24 24"><path d="M4 9V4h5v2H6v3zM15 4h5v5h-2V6h-3zM20 15v5h-5v-2h3v-3zM9 20H4v-5h2v3h3z"/></svg></button>
+    </div>
+    <div class="t-drive">
+      <div class="t-row t-tr">
+        <button type="button" tabindex="-1" class="t-btn t-small" data-b="view">Camera</button>
+        <button type="button" tabindex="-1" class="t-btn t-small" data-b="look">Look back</button>
+        <button type="button" tabindex="-1" class="t-btn t-small" data-b="horn">Horn</button>
+        <button type="button" tabindex="-1" class="t-btn t-small" data-b="reset">Reset</button>
+      </div>
+      <div class="t-steer">
+        <div class="t-gears">
+          <button type="button" tabindex="-1" class="t-btn t-gear" data-b="gearDown" aria-label="Shift down">−</button>
+          <button type="button" tabindex="-1" class="t-btn t-gear" data-b="gearUp" aria-label="Shift up">+</button>
+        </div>
+        <div class="t-arrows">
+          <button type="button" tabindex="-1" class="t-btn t-arrow" data-b="left" aria-label="Steer left"><svg viewBox="0 0 24 24"><path d="M16 4v16L5 12z"/></svg></button>
+          <button type="button" tabindex="-1" class="t-btn t-arrow" data-b="right" aria-label="Steer right"><svg viewBox="0 0 24 24"><path d="M8 4v16l11-8z"/></svg></button>
+        </div>
+      </div>
+      <div class="t-pedals">
+        <button type="button" tabindex="-1" class="t-btn t-hand" data-b="hand">Handbrake</button>
+        <button type="button" tabindex="-1" class="t-btn t-brake" data-b="brake">Brake</button>
+        <button type="button" tabindex="-1" class="t-btn t-gas" data-b="gas">Gas</button>
+      </div>
+    </div>
+    <div class="t-menu">
+      <div class="t-dpad">
+        <button type="button" tabindex="-1" class="t-btn t-d t-up" data-b="up" aria-label="Up"><svg viewBox="0 0 24 24"><path d="M4 16h16L12 5z"/></svg></button>
+        <button type="button" tabindex="-1" class="t-btn t-d t-left" data-b="mleft" aria-label="Left"><svg viewBox="0 0 24 24"><path d="M16 4v16L5 12z"/></svg></button>
+        <button type="button" tabindex="-1" class="t-btn t-d t-right" data-b="mright" aria-label="Right"><svg viewBox="0 0 24 24"><path d="M8 4v16l11-8z"/></svg></button>
+        <button type="button" tabindex="-1" class="t-btn t-d t-down" data-b="down" aria-label="Down"><svg viewBox="0 0 24 24"><path d="M4 8h16l-8 11z"/></svg></button>
+      </div>
+      <div class="t-okback">
+        <button type="button" tabindex="-1" class="t-btn t-back" data-b="cancel">Back</button>
+        <button type="button" tabindex="-1" class="t-btn t-ok" data-b="ok">OK</button>
+      </div>
+    </div>
+  </div>
 </div>
 <script type="module" src="main.js"></script>
 </body>

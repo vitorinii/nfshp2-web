@@ -158,3 +158,55 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #screen.nocursor { cursor: none; }
 .hud { position: absolute; top: 8px; right: 12px; font: 12px/1.4 ui-monospace, Menlo, monospace; color: #fffa; text-shadow: 0 1px 2px #000;
   pointer-events: none; white-space: pre; }
+
+/* ---- touch controls (touch.js): over the game held sideways; held upright, the picture on top and the controls under it.
+   --t is a big button's size, from the screen's short side; the phone's rounded corners and notch are kept clear (safe-area) ---- */
+.touch { position: absolute; inset: 0; pointer-events: none; z-index: 2; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none; --t: clamp(56px, 19vmin, 104px); --gap: clamp(8px, 2.4vmin, 14px);
+  --sl: max(16px, env(safe-area-inset-left)); --sr: max(16px, env(safe-area-inset-right));
+  --st: max(12px, env(safe-area-inset-top)); --sb: max(16px, env(safe-area-inset-bottom)); }
+#stage.touching { touch-action: none; }
+.touch .t-drive, .touch .t-menu { display: contents; }
+.touch[data-scene="drive"] .t-menu, .touch[data-scene="menu"] .t-drive { display: none; }
+.t-btn { pointer-events: auto; touch-action: none; display: flex; align-items: center; justify-content: center; padding: 0;
+  border: 2px solid #ffffff59; border-radius: 14px; background: #05101e8c; color: #fffffff0; font: 700 14px/1 system-ui, sans-serif;
+  letter-spacing: 0.02em; -webkit-tap-highlight-color: transparent; backdrop-filter: blur(2px); }
+.t-btn svg { width: 46%; height: 46%; fill: currentColor; }
+.t-btn.held { background: #ffb81cd9; border-color: var(--accent); color: var(--on-accent); }
+.t-row { position: absolute; display: flex; gap: 8px; }
+.t-tl { left: var(--sl); top: var(--st); }
+.t-tr { right: var(--sr); top: var(--st); }
+.t-small { height: 40px; min-width: 44px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
+.t-small svg { width: 20px; height: 20px; }
+
+/* driving: steering under the left thumb, the pedals under the right */
+.t-steer { position: absolute; left: var(--sl); bottom: var(--sb); display: grid; gap: var(--gap); justify-items: start; }
+.t-arrows { display: flex; gap: var(--gap); }
+.t-arrow { width: calc(var(--t) * 1.1); height: calc(var(--t) * 1.1); border-radius: 50%; }
+.t-gears { display: flex; gap: 8px; }
+.t-gear { width: calc(var(--t) * 0.62); height: calc(var(--t) * 0.5); font-size: 22px; border-radius: 10px; }
+.t-pedals { position: absolute; right: var(--sr); bottom: var(--sb); display: grid; gap: var(--gap);
+  grid-template-columns: calc(var(--t) * 1.05) calc(var(--t) * 1.15); grid-template-areas: "hand gas" "brake gas"; align-items: end; }
+.t-hand { grid-area: hand; height: calc(var(--t) * 0.6); font-size: 12px; }
+.t-brake { grid-area: brake; height: calc(var(--t) * 1.1); }
+.t-gas { grid-area: gas; height: calc(var(--t) * 1.8); font-size: 16px; }
+
+/* menus: a tap on the picture is a click; arrows, OK and Back beside it */
+.t-dpad { position: absolute; left: var(--sl); bottom: var(--sb); display: grid; gap: 6px;
+  grid-template: repeat(3, calc(var(--t) * 0.7)) / repeat(3, calc(var(--t) * 0.7)); grid-template-areas: ". u ." "l . r" ". d ."; }
+.t-up { grid-area: u; } .t-left { grid-area: l; } .t-right { grid-area: r; } .t-down { grid-area: d; }
+.t-d { border-radius: 12px; }
+.t-okback { position: absolute; right: var(--sr); bottom: var(--sb); display: grid; gap: var(--gap); justify-items: end; }
+.t-ok { width: calc(var(--t) * 1.15); height: calc(var(--t) * 1.15); border-radius: 50%; font-size: 18px; }
+.t-back { width: calc(var(--t) * 0.95); height: calc(var(--t) * 0.6); font-size: 14px; }
+
+/* upright: the picture fills the width at the top, the controls go in the space under it */
+@media (orientation: portrait) {
+  #stage.touching #screen { height: min(75vw, 58vh); }
+  .touch { --t: clamp(56px, 17vw, 104px); }
+  .t-tl, .t-tr { top: calc(min(75vw, 58vh) + 12px); }
+  .t-tr { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100vw - var(--sl) - var(--sr) - 112px); }
+}
+/* the phone's keyboard types into this box, out of sight; the Keyboard button brings it up while the game waits for a name */
+.type-box { position: absolute; left: 50%; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; font-size: 16px; }
+.t-kbd { position: absolute; left: 50%; top: var(--st); transform: translateX(-50%); padding: 0 16px; }

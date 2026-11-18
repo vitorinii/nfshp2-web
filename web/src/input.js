@@ -1,9 +1,10 @@
 // The keyboard, the mouse and the gamepads into the runtime's HostInput block (runtime/host_input.h): keys by Windows virtual-key
-// code (the port's bindings and hp2.ini keep those), gamepads as SDL would give them, the canvas's size and focus.
+// code (the port's bindings and hp2.ini keep those), gamepads as SDL would give them, the canvas's size and focus. The touch controls
+// (touch.js) come in as the first gamepad, and a tap on the picture as the mouse.
 
 // HostInput's layout (wasm32); the block's own size word must agree
 const OFF = { magic: 0, version: 4, size: 8, focused: 12, keys: 16, caps: 272, mx: 276, my: 280, buttons: 284, moves: 288, wheel: 292,
-  vw: 296, vh: 300, pads: 304, padSize: 44, evHead: 392, evTail: 396, ev: 400, evSize: 12, quit: 1168, cursor: 1172, total: 1176 };
+  vw: 296, vh: 300, pads: 304, padSize: 44, evHead: 392, evTail: 396, ev: 400, evSize: 12, quit: 1168, cursor: 1172, scene: 1176, typing: 1180, total: 1184 };
 const MAGIC = 0x49505548;
 
 const VK = {
@@ -39,7 +40,11 @@ export class Input {
     this.moves = 0;
     this.wheel = 0;
     this.rumbleSent = [-1, -1];
+    this.touch = null;                  // touch.js, once the page has made it
+    this.padHeld = 0;
+    this.tapUp = 0;
     const key = (e, down) => {
+      if (e.target && e.target.id === 'type-box') return;          // the phone's keyboard: typeText() has it
       if (e.altKey && e.code === 'Enter') {
         if (down && !e.repeat) this.toggleFullscreen();
         e.preventDefault();
@@ -84,6 +89,46 @@ export class Input {
     this.i32(OFF.moves, ++this.moves);
   }
   buttons(b) { this.i32(OFF.buttons, (b & 1) | (b & 2 ? 2 : 0) | (b & 4 ? 4 : 0)); }
+  // typed text (a phone's keyboard, touch.js) as key presses, one at a time: a capital with Shift held (the game reads it as it takes
+  // the press), '\b' Backspace, '\r' Enter. Only what a name can have: letters, digits, space, ! . #
+  typeText(text) {
+    for (const ch of text) {
+      let vk = 0, shift = false;
+      if (/[a-z]/.test(ch)) vk = ch.toUpperCase().charCodeAt(0);
+      else if (/[A-Z]/.test(ch)) vk = ch.charCodeAt(0), shift = true;
+      else if (/[0-9]/.test(ch)) vk = ch.charCodeAt(0);
+      else if (ch === ' ') vk = 0x20;
+      else if (ch === '!') vk = 0x31, shift = true;
+      else if (ch === '#') vk = 0x33, shift = true;
+      else if (ch === '.') vk = 0xBE;
+      else if (ch === '\b') vk = 0x08;
+      else if (ch === '\r') vk = 0x0D;
+      if (vk) (this.typing ||= []).push({ vk, shift });
+    }
+    if (!this.typingBusy) this.typeNext();
+  }
+  typeNext() {
+    const k = this.typing && this.typing.shift();
+    this.typingBusy = !!k;
+    if (!k) return;
+    if (k.shift) this.setKey(0xA0, true);
+    this.setKey(k.vk, true);
+    this.event(k.vk, true, false);
+    setTimeout(() => {
+      this.setKey(k.vk, false);
+      this.event(k.vk, false, false);
+      if (k.shift) this.setKey(0xA0, false);
+      setTimeout(() => this.typeNext(), 30);
+    }, 50);
+  }
+  // a finger on the picture as the mouse's left button (x < 0: let go wherever it is). The game reads the button now and then, so a
+  // tap holds it at least 100 ms
+  tap(x, y, down) {
+    if (x >= 0) this.mouse({ clientX: x, clientY: y });
+    clearTimeout(this.tapUp);
+    if (down) { this.tapAt = performance.now(); this.buttons(1); }
+    else this.tapUp = setTimeout(() => this.buttons(0), Math.max(0, 100 - (performance.now() - (this.tapAt || 0))));
+  }
   toggleFullscreen() {
     const stage = this.canvas.parentElement;
     if (!document.fullscreenElement) stage.requestFullscreen().catch(() => {});
@@ -97,19 +142,32 @@ export class Input {
     this.i32(OFF.vw, Math.round(this.canvas.clientWidth * dpr));
     this.i32(OFF.vh, Math.round(this.canvas.clientHeight * dpr));
     const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(p => p && p.connected) : [];
+    // the touch controls: what the game shows, in; the buttons held, out. A controller's button pressed sends them away
+    const a32 = this.i32a();
+    const touch = this.touch ? this.touch.frame(a32[(this.ptr + OFF.scene) >> 2], a32[(this.ptr + OFF.typing) >> 2]) : null;
+    if (touch) this.touchUsed = true;
+    let held = 0;
+    for (const p of pads) for (const [i, bit] of PAD_BITS) if (p.buttons[i] && p.buttons[i].pressed) held |= bit;
+    if (held & ~this.padHeld && this.touch) this.touch.away();
+    this.padHeld = held;
     for (let slot = 0; slot < 2; slot++) {
       const base = OFF.pads + slot * OFF.padSize, p = pads[slot];
-      if (!p) { this.i32(base, 0); continue; }
+      // the first slot: the controller and the touch controls together; once touched, a pad stays there (a pad that came and went
+      // would be a controller pulled out)
+      const t = slot === 0 && this.touchUsed ? (touch || { mask: 0, lx: 0, lt: 0, rt: 0 }) : null;
+      if (!p && !t) { this.i32(base, 0); continue; }
       let mask = 0;
-      for (const [i, bit] of PAD_BITS) if (p.buttons[i] && p.buttons[i].pressed) mask |= bit;
-      const axis = i => Math.max(-32768, Math.min(32767, Math.round((p.axes[i] || 0) * 32767)));
-      const trig = i => Math.round(Math.min(1, Math.max(0, p.buttons[i] ? p.buttons[i].value : 0)) * 32767);
-      this.i32(base + 4, mask);
-      this.i32(base + 8, trig(6));
-      this.i32(base + 12, trig(7));
-      this.i32(base + 16, axis(2)), this.i32(base + 20, axis(3)), this.i32(base + 24, axis(0)), this.i32(base + 28, axis(1));
-      this.i32(base + 32, /054c|dualsense|dualshock|wireless controller/i.test(p.id) ? 1 : 0);
+      if (p) for (const [i, bit] of PAD_BITS) if (p.buttons[i] && p.buttons[i].pressed) mask |= bit;
+      const axis = i => (p ? Math.max(-32768, Math.min(32767, Math.round((p.axes[i] || 0) * 32767))) : 0);
+      const trig = i => (p ? Math.round(Math.min(1, Math.max(0, p.buttons[i] ? p.buttons[i].value : 0)) * 32767) : 0);
+      const lx = t && t.lx ? t.lx * 32767 : axis(0);
+      this.i32(base + 4, mask | (t ? t.mask : 0));
+      this.i32(base + 8, t && t.lt ? 32767 : trig(6));
+      this.i32(base + 12, t && t.rt ? 32767 : trig(7));
+      this.i32(base + 16, axis(2)), this.i32(base + 20, axis(3)), this.i32(base + 24, lx), this.i32(base + 28, axis(1));
+      this.i32(base + 32, p && /054c|dualsense|dualshock|wireless controller/i.test(p.id) ? 1 : 0);
       this.i32(base, 1);
+      if (!p) { this.buzz(base); continue; }
       // the motors: the game's wish, told again while it lasts
       const a = this.i32a(), small = a[(this.ptr + base + 36) >> 2], large = a[(this.ptr + base + 40) >> 2];
       const want = small << 8 | large, now = performance.now();
@@ -119,5 +177,15 @@ export class Input {
         p.vibrationActuator.playEffect('dual-rumble', { duration: want ? 1000 : 0, strongMagnitude: large / 255, weakMagnitude: small ? 1 : 0 }).catch(() => {});
       }
     }
+  }
+  // the touch controls' pad: a strong rumble (a crash) as a short buzz of the phone, where it has one (Android)
+  buzz(base) {
+    const large = this.i32a()[(this.ptr + base + 40) >> 2];
+    const now = performance.now();
+    if (large >= 128 && !(this.buzzing > 0) && now - (this.buzzAt || 0) > 500 && navigator.vibrate) {
+      this.buzzAt = now;
+      try { navigator.vibrate(Math.min(250, 40 + large)); } catch {}
+    }
+    this.buzzing = large >= 128 ? 1 : 0;
   }
 }

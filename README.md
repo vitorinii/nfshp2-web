@@ -19,7 +19,8 @@ Windows; the browser side follows th0mk's [nfsu2-web](https://github.com/th0mk/n
   checks it: the boot program `SLUS_203.62` must have SHA-1 `6397d4425d55056678ed5a405cc81542f7d4d2ee`.
 - **To build:** an Apple Silicon Mac (the tested setup) or Linux, with `git`, Python 3, `bsdtar`, `make`, `curl` and
   Node.js 20 or newer. `setup.sh` downloads [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) 34 into `deps/`.
-- **To play:** the latest Google Chrome or Microsoft Edge on a computer (WebGPU), with a keyboard or a gamepad.
+- **To play:** the latest Google Chrome or Microsoft Edge on a computer (WebGPU), with a keyboard or a gamepad; or the latest
+  Chrome on an Android phone, with the touch controls on screen.
 
 ## Build
 

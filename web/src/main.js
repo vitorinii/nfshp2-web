@@ -7,6 +7,7 @@ import { root } from './store.js';
 const $ = id => document.getElementById(id);
 const playBtn = $('play');
 const params = new URLSearchParams(location.search);
+const phone = matchMedia('(pointer: coarse)').matches;       // a phone or a tablet: touch controls, full screen on Play
 // the big status ("Loading", "Ready") and the line under it
 function setStatus(head, sub = '', bad = false) {
   $('status').textContent = head;
@@ -64,8 +65,11 @@ async function checks() {
   const no = (why, text) => bad.push({ why, text });
   if (!isSecureContext) no('https', 'This page has to be opened over https (or on localhost, on the computer that runs the server).');
   else if (!crossOriginIsolated) no('isolation', 'The server has to send the isolation headers (Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy): start it with web/server.mjs.');
-  if (!navigator.gpu) no('webgpu', 'This browser has no WebGPU. Use the latest Google Chrome or Microsoft Edge on a computer.');
-  else if (!(await navigator.gpu.requestAdapter().catch(() => null))) no('gpu', 'WebGPU is turned off in this browser, or the graphics card is not supported. Check chrome://gpu.');
+  if (!navigator.gpu) no('webgpu', phone ? 'This browser has no WebGPU. On an Android phone or tablet, use the latest Google Chrome.'
+    : 'This browser has no WebGPU. Use the latest Google Chrome or Microsoft Edge.');
+  else if (!(await navigator.gpu.requestAdapter().catch(() => null))) no('gpu', phone
+    ? 'WebGPU is turned off in this browser, or this phone\'s graphics are not supported. Update the system and Chrome.'
+    : 'WebGPU is turned off in this browser, or the graphics card is not supported. Check chrome://gpu.');
   if (!Atomics.waitAsync) no('old', 'This browser is too old for the game. Use the latest Google Chrome or Microsoft Edge.');
   try { await root(); } catch { no('storage', 'This browser does not let the page keep files (for your saves). In a private window, use a normal one.'); }
   return bad;
@@ -173,8 +177,12 @@ async function start(module) {
 
 async function attach(g) {
   const canvas = $('screen');
-  const [{ Input }, { Renderer }, { Sound }] = await Promise.all([import('./input.js'), import('./gpu.js'), import('./audio.js')]);
-  g.registeredKind(HOST_KIND_INPUT).then(b => { g.input = new Input(g.memory, b.ptr, canvas); });
+  const [{ Input }, { Renderer }, { Sound }, { Touch }] = await Promise.all([import('./input.js'), import('./gpu.js'), import('./audio.js'),
+    import('./touch.js')]);
+  g.registeredKind(HOST_KIND_INPUT).then(b => {
+    g.input = new Input(g.memory, b.ptr, canvas);
+    if (navigator.maxTouchPoints > 0) g.input.touch = new Touch($('stage'), g.input);      // a touch screen: the touch controls
+  });
   g.registeredKind(HOST_KIND_GPU).then(async b => {
     try {
       g.renderer = new Renderer(g.memory, b.ptr, canvas, $('hud'), logLine);
@@ -193,7 +201,8 @@ async function attach(g) {
 // ---- the page ----
 let running = false;
 const busy = () => running;
-tabs($('controls'));
+const showControls = tabs($('controls'));
+if (phone) showControls('touch');
 const showAbout = tabs($('about'));
 // "Credits below" in the header: the About panel's Credits tab, scrolled to
 function showCredits() { showAbout('credits'); $('about').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
@@ -228,6 +237,11 @@ async function play() {
     $('start').hidden = true;
     $('stage').hidden = false;
     $('screen').focus();
+    if (phone) {
+      // a phone or tablet: the game on the whole screen (not on an iPhone, which has no full screen for a page), and the screen kept on
+      $('stage').requestFullscreen?.().catch(() => {});
+      awake();
+    }
     const g = await start(module);
     count('play');
     playingFor(true);
@@ -243,6 +257,12 @@ async function play() {
   }
 }
 playBtn.addEventListener('click', play);
+let wake = null;
+async function awake() {
+  if (wake || !navigator.wakeLock || $('stage').hidden) return;
+  try { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (phone && document.visibilityState === 'visible') awake(); });
 // Donate in the header: a short dialog with the Ko-fi link, closed as Ko-fi opens in its own tab
 $('donate-btn').addEventListener('click', () => $('donate').showModal());
 $('donate-go').addEventListener('click', () => $('donate').close());

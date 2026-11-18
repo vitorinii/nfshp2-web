@@ -3,9 +3,13 @@
 //
 //   node tools/cdp.mjs --seconds 40 --shots 10,20,30 --keys "12:Enter,15:ArrowDown" [--url http://localhost:8080/?autoplay] [--out dir]
 //                      [--headful] [--hold "20-25:ArrowUp"] [--click "12:640:400"] [--eval "10:expr|12:expr"] [--keep-profile]
-//                      [--profile <dir>] [--chrome <path>] [--size 1280,800]
+//                      [--profile <dir>] [--chrome <path>] [--size 1280,800] [--mobile] [--touch "60:@gas:5,61:@right:1.5,20:640/400"]
 //
 // Screenshots go to --out (default build/cdp) as shot-<seconds>.png; the console to console.txt there.
+// --mobile: a phone's screen (a touch screen, coarse pointer, device pixel ratio 2, --size its viewport). --touch: fingers, as
+// "<seconds>:<where>[:<held seconds>]", where is @name (the touch control with data-b="name", at its middle) or x/y in the viewport;
+// fingers held together are one multi-touch, as on a phone. --type "<seconds>:<text>": text into what has the focus, as a phone's keyboard
+// puts it (an input event, no keys).
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, appendFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
@@ -20,6 +24,9 @@ const KEYS = (arg('--keys', '') || '').split(',').filter(Boolean).map(s => { con
 const CLICKS = (arg('--click', '') || '').split(',').filter(Boolean).map(s => { const [t, x, y] = s.split(':').map(Number); return { t, x, y }; });
 const EVALS = (arg('--eval', '') || '').split('|').filter(Boolean).map(s => { const i = s.indexOf(':'); return { t: +s.slice(0, i), x: s.slice(i + 1) }; });
 const HOLDS = (arg('--hold', '') || '').split(',').filter(Boolean).map(s => { const [r, k] = s.split(':'); const [a, b] = r.split('-').map(Number); return { a, b, k }; });
+const TOUCHES = (arg('--touch', '') || '').split(',').filter(Boolean).map(s => { const [t, w, d] = s.split(':'); return { t: +t, w, d: d ? +d : 0.15 }; });
+const MOBILE = has('--mobile');
+const TYPES = (arg('--type', '') || '').split(',').filter(Boolean).map(s => { const i = s.indexOf(':'); return { t: +s.slice(0, i), x: s.slice(i + 1) }; });
 const OUT = path.resolve(arg('--out', 'build/cdp'));
 const PORT = +arg('--port', 9333);
 const SIZE = arg('--size', '1280,800').split(',').map(Number);      // the page's viewport
@@ -36,7 +43,8 @@ if (!has('--keep-profile')) rmSync(PROFILE, { recursive: true, force: true });
 const chrome = spawn(CHROME, [
   has('--headful') ? '' : '--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, '--no-first-run',
   '--no-default-browser-check', '--enable-unsafe-webgpu', '--autoplay-policy=no-user-gesture-required', `--window-size=${SIZE[0]},${SIZE[1] + 100}`,
-  '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', 'about:blank',
+  '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
+  ...(process.env.CHROME_ARGS || '').split(' '), 'about:blank',     // CHROME_ARGS: more Chrome switches, space-separated
 ].filter(Boolean), { stdio: ['ignore', 'ignore', 'pipe'] });
 chrome.stderr.on('data', d => { const s = String(d); if (/error|fatal/i.test(s) && !/DEPRECATED|dbus|Fontconfig/i.test(s)) appendFileSync(path.join(OUT, 'chrome-stderr.txt'), s); });
 const stop = () => { try { chrome.kill('SIGKILL'); } catch {} };
@@ -86,7 +94,9 @@ await send('Log.enable');
 await send('Page.enable');
 await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
 await send('Emulation.setFocusEmulationEnabled', { enabled: true });
-await send('Emulation.setDeviceMetricsOverride', { width: SIZE[0], height: SIZE[1], deviceScaleFactor: 1, mobile: SIZE[0] < 600 });
+await send('Emulation.setDeviceMetricsOverride', { width: SIZE[0], height: SIZE[1], deviceScaleFactor: MOBILE ? 2 : 1, mobile: MOBILE || SIZE[0] < 600,
+  ...(MOBILE && SIZE[0] > SIZE[1] ? { screenOrientation: { type: 'landscapePrimary', angle: 90 } } : {}) });
+if (MOBILE) await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
 await send('Page.navigate', { url: URL_ });
 
 const keyDef = k => {
@@ -107,7 +117,42 @@ const shot = async t => {
   } catch (err) { note(`${stamp()} [cdp] screenshot failed: ${err.message}`); }
 };
 
-const events = [...SHOTS.map(t => ({ t, f: () => shot(t) })), ...KEYS.map(({ t, k }) => ({ t, f: () => { note(`${stamp()} [cdp] key ${k}`); return press(k); } })),
+// fingers: a finger down is a touch start with all those down; one that lifts, a touch end with that one
+const fingers = new Map();
+let fingerId = 0;
+const touchSet = type => send('Input.dispatchTouchEvent', { type, touchPoints: [...fingers.values()].map(f => ({ x: f.x, y: f.y, id: f.id, radiusX: 8, radiusY: 8, force: 1 })) });
+async function where(w) {
+  if (!w.startsWith('@')) { const [x, y] = w.split('/').map(Number); return { x, y }; }
+  const r = await send('Runtime.evaluate', { returnByValue: true, expression:
+    `(() => { const b = [...document.querySelectorAll('[data-b="${w.slice(1)}"]')].find(e => e.offsetParent); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()` });
+  return r.result.value;
+}
+const touchEvents = TOUCHES.flatMap(({ t, w, d }) => {
+  const key = Symbol();
+  const [from, to] = w.split('>');           // "@gas>@brake": the finger slides to the second halfway through
+  return [{ t, f: async () => {
+    const p = await where(from);
+    if (!p) { note(`${stamp()} [cdp] touch ${from}: not on screen`); return; }
+    note(`${stamp()} [cdp] touch ${w} (${Math.round(p.x)},${Math.round(p.y)}) for ${d} s`);
+    fingers.set(key, { ...p, id: ++fingerId });
+    await touchSet('touchStart');
+  } }, ...(to ? [{ t: t + d / 2, f: async () => {
+    const f = fingers.get(key), p = await where(to);
+    if (!f || !p) return;
+    note(`${stamp()} [cdp] slide to ${to}`);
+    const a = { x: f.x, y: f.y };
+    for (let i = 1; i <= 6; i++) { f.x = a.x + (p.x - a.x) * i / 6; f.y = a.y + (p.y - a.y) * i / 6; await touchSet('touchMove'); }
+  } }] : []), { t: t + d, f: async () => {
+    const f = fingers.get(key);
+    if (!f) return;
+    fingers.delete(key);
+    // a touch end's points are the fingers that lift (Chrome's reading of it), the others stay down
+    await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [{ x: f.x, y: f.y, id: f.id }] });
+  } }];
+});
+
+const events = [...touchEvents, ...TYPES.map(({ t, x }) => ({ t, f: () => { note(`${stamp()} [cdp] type ${x}`); return send('Input.insertText', { text: x }); } })),
+  ...SHOTS.map(t => ({ t, f: () => shot(t) })), ...KEYS.map(({ t, k }) => ({ t, f: () => { note(`${stamp()} [cdp] key ${k}`); return press(k); } })),
   ...CLICKS.map(({ t, x, y }) => ({ t, f: async () => {
     note(`${stamp()} [cdp] click ${x},${y}`);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });

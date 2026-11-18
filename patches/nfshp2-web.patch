@@ -302,10 +302,10 @@ index 21c8c49..b68a9da 100644
  VU_FTOI(0, 0) VU_FTOI(4, 4) VU_FTOI(12, 12) VU_FTOI(15, 15)
  static inline void VU_vlqi(Ctx &c, u32 w)
 diff --git a/recomp/runtime/window.cpp b/recomp/runtime/window_host.cpp
-similarity index 71%
+similarity index 70%
 copy from recomp/runtime/window.cpp
 copy to recomp/runtime/window_host.cpp
-index be071b9..88b9e3e 100644
+index be071b9..b00a7a6 100644
 --- a/recomp/runtime/window.cpp
 +++ b/recomp/runtime/window_host.cpp
 @@ -1,4 +1,6 @@
@@ -672,7 +672,19 @@ index be071b9..88b9e3e 100644
          const PadState a = pad_read(0), b = pad_read(1);      // either gamepad, as the menus take them
          now = key(VK_DELETE) || (a.ok && (a.mask & 0x4000)) || (b.ok && (b.mask & 0x4000));
      }
-@@ -549,7 +458,7 @@ void window_cursor_frame()
+@@ -539,7 +448,10 @@ void window_cursor_frame()
+ {
+     if (!g_hwnd) return;
+     const unsigned long long mouse_at = g_mouse_at;
+-    const bool cursor = pc_cursor_wanted() && mouse_at && (long long)(GetTickCount64() - mouse_at) < 3000;
++    const bool wanted = pc_cursor_wanted();
++    const bool cursor = wanted && mouse_at && (long long)(GetTickCount64() - mouse_at) < 3000;
++    __atomic_store_n(&g_host_input.scene, pc_car_input() ? 2 : wanted ? 1 : 0, __ATOMIC_RELAXED);
++    __atomic_store_n(&g_host_input.typing, g_text_on ? 1 : 0, __ATOMIC_RELAXED);
+     static const bool log = getenv("HP2_NATIVELOG") != nullptr;
+     if (log) {                              // the wish itself, whether or not a mouse is there
+         static int was = -1, flips;
+@@ -549,7 +461,7 @@ void window_cursor_frame()
      }
      if (g_cursor_on != cursor) {
          g_cursor_on = cursor;
@@ -681,7 +693,7 @@ index be071b9..88b9e3e 100644
          if (log) fprintf(stderr, "pointer: %s at %.1f s\n", cursor ? "wanted" : "not wanted", GetTickCount64() % 1000000 / 1000.0);
      }
  }
-@@ -614,7 +523,7 @@ u16 window_pad(u8 sticks[4], u8 pressure[12])
+@@ -614,7 +526,7 @@ u16 window_pad(u8 sticks[4], u8 pressure[12])
          return 0xFFFF;
      }
      key_script_step();
@@ -690,7 +702,7 @@ index be071b9..88b9e3e 100644
      static bool esc_held;                  // from cancelling a capture: not a press yet
      if (g_cap) {
          esc_held = true;
-@@ -792,7 +701,7 @@ u16 window_pad2(u8 sticks[4], u8 pressure[12])
+@@ -792,7 +704,7 @@ u16 window_pad2(u8 sticks[4], u8 pressure[12])
  {
      sticks[0] = sticks[1] = sticks[2] = sticks[3] = 0x80;
      memset(pressure, 0, 12);
@@ -699,7 +711,7 @@ index be071b9..88b9e3e 100644
      u16 buttons = 0xFFFF;
      auto press = [&](int b, int amount) {
          buttons &= ~(1u << kPadBit[b].bit);
-@@ -831,59 +740,15 @@ u16 window_pad2(u8 sticks[4], u8 pressure[12])
+@@ -831,59 +743,15 @@ u16 window_pad2(u8 sticks[4], u8 pressure[12])
      return buttons;
  }
  

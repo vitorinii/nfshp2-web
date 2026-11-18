@@ -38,6 +38,9 @@ struct HostInput {
     HostKeyEvent ev[64];
     int32_t quit;                       // the page asks the game to end
     int32_t cursor_wanted;              // the game: the menus' pointer is to show (the page hides its own otherwise)
+    int32_t scene;                      // the game: what is on screen, for the page's touch controls: 0 nothing to point at (logos, films,
+                                        // loading), 1 a screen with something to point at (menus, the pause menu, a replay), 2 driving
+    int32_t typing;                     // the game: a name is being typed (the page brings up a phone's own keyboard)
 };
 
 HostInput &host_input();                // window_host.cpp
