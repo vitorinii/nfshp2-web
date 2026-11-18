@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#050b14">
+<meta name="robots" content="noindex, nofollow">
+<title>Site Stats</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="stats.css">
+</head>
+<body>
+<main class="stats">
+  <header class="panel">
+    <div class="panel-head">
+      <h1>Site stats</h1>
+      <a class="btn" href="/">The game</a>
+    </div>
+    <p class="hint" id="since">Visits, plays and time played, counted on the server. Days are in UTC.</p>
+    <label class="check" id="me-row" hidden><input type="checkbox" id="me"> Leave this browser out of the counts</label>
+  </header>
+
+  <section class="panel" id="locked" hidden>
+    <h2>Key needed</h2>
+    <p class="box" id="locked-text">Open this page with your link: /stats#key. The key is in stats.key, next to the server's counts file.</p>
+  </section>
+
+  <div id="open" hidden>
+    <section class="tiles" aria-label="Now and today">
+      <div class="tile live"><span class="n" id="now">0</span><span class="l">playing now</span></div>
+      <div class="tile"><span class="n" id="t-players">0</span><span class="l">players today</span></div>
+      <div class="tile"><span class="n" id="t-visitors">0</span><span class="l">visitors today</span></div>
+      <div class="tile"><span class="n" id="t-time">0</span><span class="l">played today</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>Totals</h2>
+      <div class="scroll"><table id="totals"></table></div>
+      <p class="hint">A visitor or player who comes back on another day counts again: nothing links one day to the next.</p>
+    </section>
+
+    <section class="panel">
+      <h2>By day</h2>
+      <div class="scroll"><table id="days"></table></div>
+    </section>
+
+    <div class="lists">
+      <section class="panel"><h2>Countries</h2><p class="hint sub">Visitors, last 30 days</p><table class="list" id="countries"></table></section>
+      <section class="panel"><h2>Browsers</h2><p class="hint sub">Visitors, last 30 days</p><table class="list" id="browsers"></table></section>
+      <section class="panel"><h2>Could not run it</h2><p class="hint sub">Why, last 30 days</p><table class="list" id="why"></table></section>
+      <section class="panel"><h2>Game stops</h2><p class="hint sub">Errors that ended a game, last 30 days</p><table class="list" id="stops"></table></section>
+    </div>
+  </div>
+</main>
+<script type="module" src="stats.js"></script>
+</body>
+</html>

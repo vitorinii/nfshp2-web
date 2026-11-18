@@ -95,8 +95,9 @@ export class SavesPanel {
 const PIECE = 32 << 20;
 
 export class GameDataPanel {
-  constructor({ busy }) {
+  constructor({ busy, done }) {
     this.busy = busy;
+    this.done = done;           // told when a preload has all of the game
     this.btn = $('preload');
     this.remove = $('data-remove');
     this.fill = $('data-fill');
@@ -198,6 +199,7 @@ export class GameDataPanel {
     } finally {
       this.abort = null;
     }
+    if (todo.length && !ac.signal.aborted) this.done?.();
     await this.refresh();
   }
   stop() { if (this.abort) this.abort.abort(); }

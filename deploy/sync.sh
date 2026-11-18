@@ -13,5 +13,5 @@ case "$DEST" in
   *:*) ssh "${DEST%%:*}" mkdir -p "${DEST#*:}" ;;
   *)   mkdir -p "$DEST" ;;
 esac
-rsync -a --relative --delete --progress --exclude '.complete' start.sh deploy/nfshp2-web.service web/server.mjs web/src build/web/hp2.wasm game "$DEST/"
+rsync -a --relative --delete --progress --exclude '.complete' start.sh deploy/nfshp2-web.service web/server.mjs web/stats.mjs web/src build/web/hp2.wasm game "$DEST/"
 echo "Copied. On that machine: sudo systemctl restart nfshp2-web (the first time: deploy/nfshp2-web.service)."

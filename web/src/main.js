@@ -40,25 +40,45 @@ setInterval(() => {
 }, 1000);
 window.hp2log = logLine;
 
+// ---- the counts the site keeps (web/stats.mjs): a visit, a play, each minute played, a stop. Nothing is kept in the browser for them;
+// not sent from automated browsers, nor from one its owner has left out on /stats ----
+let counting = !navigator.webdriver && !/HeadlessChrome/.test(navigator.userAgent);
+try { if (localStorage.getItem('hp2.nocount') === '1') counting = false; } catch {}
+function count(e, more) {
+  if (!counting) return;
+  try { navigator.sendBeacon('/hi', JSON.stringify({ e, ...more })); } catch {}
+}
+let minutes = null;
+function playingFor(on) {
+  clearInterval(minutes);
+  minutes = on ? setInterval(() => { if (document.visibilityState === 'visible') count('min'); }, 60000) : null;
+}
+
 const POOL = 20;
 const MEM_INITIAL = 16384, MEM_MAX = 65536;     // wasm pages: 1 GB at the start, 4 GB at most (the module's own minimum and maximum)
 
 // what this browser must have; each missing thing is a line with what to do
+// (why: a word for the counts)
 async function checks() {
   const bad = [];
-  if (!isSecureContext) bad.push('This page has to be opened over https (or on localhost, on the computer that runs the server).');
-  else if (!crossOriginIsolated) bad.push('The server has to send the isolation headers (Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy): start it with web/server.mjs.');
-  if (!navigator.gpu) bad.push('This browser has no WebGPU. Use the latest Google Chrome or Microsoft Edge on a computer.');
-  else if (!(await navigator.gpu.requestAdapter().catch(() => null))) bad.push('WebGPU is turned off in this browser, or the graphics card is not supported. Check chrome://gpu.');
-  if (!Atomics.waitAsync) bad.push('This browser is too old for the game. Use the latest Google Chrome or Microsoft Edge.');
-  try { await root(); } catch { bad.push('This browser does not let the page keep files (for your saves). In a private window, use a normal one.'); }
+  const no = (why, text) => bad.push({ why, text });
+  if (!isSecureContext) no('https', 'This page has to be opened over https (or on localhost, on the computer that runs the server).');
+  else if (!crossOriginIsolated) no('isolation', 'The server has to send the isolation headers (Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy): start it with web/server.mjs.');
+  if (!navigator.gpu) no('webgpu', 'This browser has no WebGPU. Use the latest Google Chrome or Microsoft Edge on a computer.');
+  else if (!(await navigator.gpu.requestAdapter().catch(() => null))) no('gpu', 'WebGPU is turned off in this browser, or the graphics card is not supported. Check chrome://gpu.');
+  if (!Atomics.waitAsync) no('old', 'This browser is too old for the game. Use the latest Google Chrome or Microsoft Edge.');
+  try { await root(); } catch { no('storage', 'This browser does not let the page keep files (for your saves). In a private window, use a normal one.'); }
   return bad;
 }
 
 // the module, with its download on the progress bar
 async function boot() {
   const bad = await checks();
-  if (bad.length) { for (const b of bad) problem(b); throw Object.assign(new Error('This browser cannot run the game yet.'), { shown: true }); }
+  if (bad.length) {
+    for (const b of bad) problem(b.text);
+    count('cant', { why: bad.map(b => b.why) });
+    throw Object.assign(new Error('This browser cannot run the game yet.'), { shown: true });
+  }
   setStatus('Loading', 'Downloading the game code.');
   const t0 = performance.now();
   const r = await fetch('/hp2.wasm');
@@ -77,6 +97,7 @@ async function boot() {
 let game = null;
 // the game is over (its own Quit, or an error): the start panel again, and Play starts a fresh game (a reload: the process's memory is spent)
 function ended(text, bad = false) {
+  playingFor(false);
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   $('stage').hidden = true;
   $('start').hidden = false;
@@ -108,7 +129,7 @@ async function start(module) {
       logLine(`[page] block ${m.kind} at ${m.ptr.toString(16)}, ${m.size} bytes`);
       break;
     case 'exit': logLine(`[page] the game ended (${m.code})`); ended('The game has ended. Your progress is saved in this browser.'); break;
-    case 'fatal': logLine(`[page] FATAL ${m.s}`, 2); ended(`The game stopped: ${m.s.split('\n')[0]}`, true); break;
+    case 'fatal': logLine(`[page] FATAL ${m.s}`, 2); count('stop', { s: m.s.split('\n')[0] }); ended(`The game stopped: ${m.s.split('\n')[0]}`, true); break;
     }
   };
 
@@ -161,6 +182,7 @@ async function attach(g) {
       g.renderer.run();
     } catch (err) {
       logLine(`[page] renderer: ${err.stack || err}`, 2);
+      count('stop', { s: `picture: ${err.message}` });
       setStatus('Stopped', `The picture could not start: ${err.message}`, true);
     }
   });
@@ -178,9 +200,10 @@ function showCredits() { showAbout('credits'); $('about').scrollIntoView({ behav
 $('credits-link').addEventListener('click', e => { e.preventDefault(); showCredits(); });
 if (location.hash === '#credits') showCredits();
 const saves = new SavesPanel({ busy });
-const gameData = new GameDataPanel({ busy });
+const gameData = new GameDataPanel({ busy, done: () => count('preload') });
 window.hp2page = { saves, gameData };       // for tools/cdp.mjs runs
 
+count('view');
 let modulePromise = boot().then(m => {
   playBtn.disabled = false;
   setStatus('Ready', 'Press Play or Enter to start.');
@@ -188,6 +211,7 @@ let modulePromise = boot().then(m => {
   return m;
 }).catch(err => {
   logLine(`[page] ${err.stack || err}`, 2);
+  if (!err.shown) count('stop', { s: `loading: ${err.message}` });
   setStatus('Problem', err.shown ? err.message : `The game could not load: ${err.message}`, true);
   return null;
 });
@@ -205,8 +229,11 @@ async function play() {
     $('stage').hidden = false;
     $('screen').focus();
     const g = await start(module);
+    count('play');
+    playingFor(true);
     await attach(g);
   } catch (err) {
+    count('stop', { s: `starting: ${err.message}` });
     $('start').hidden = false;
     $('stage').hidden = true;
     logLine(`[page] ${err.stack || err}`, 2);

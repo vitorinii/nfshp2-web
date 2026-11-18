@@ -1,5 +1,5 @@
 // The server for NFS Hot Pursuit 2 in the browser. Node.js 20 or newer, no dependencies:
-//   node web/server.mjs [--port 8080] [--host 127.0.0.1] [--data game] [--log logs/browser.log] [--no-log]
+//   node web/server.mjs [--port 8080] [--host 127.0.0.1] [--data game] [--log logs/browser.log] [--no-log] [--stats stats.json]
 //
 //   /              the page (web/src), with the headers SharedArrayBuffer needs (cross-origin isolated)
 //   /hp2.wasm      the module (build/web/hp2.wasm), gzipped once in memory for browsers that take it
@@ -8,6 +8,8 @@
 //                  No file extension in the address: a CDN (Cloudflare) caches names like ZZDATA.BIN and then answers ranges whole
 //   /log           POST: the page's console appended to --log (on by default only when serving this computer alone), and only
 //                  from a browser on this computer: a tunnel or proxy (Cloudflare's) also connects from here, for everyone
+//   /hi            POST: what the page tells for the counts (a visit, a play, a minute played, a stop), kept with --stats only
+//   /stats         the counts (web/src/stats.html), for whoever has the key in stats.key next to the --stats file (web/stats.mjs)
 //
 // The players' saves never reach the server: they stay in each browser (web/src/saves.js).
 // Other computers need https (a secure page): put it behind a proxy with a certificate.
@@ -29,6 +31,7 @@ const LOG = process.argv.includes('--no-log') ? null : arg('--log', LOCAL ? path
 const LOG_MAX = 64 << 20;
 const STATIC = path.join(here, 'src');
 const WASM = path.join(repo, 'build/web/hp2.wasm');
+const STATS = arg('--stats', null) ? (await import('./stats.mjs')).createStats(arg('--stats')) : null;
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.wasm': 'application/wasm', '.json': 'application/json', '.wgsl': 'text/plain; charset=utf-8',
@@ -131,6 +134,15 @@ function fromHere(req) {
     && /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(req.headers.host || '');
 }
 
+// who is asking: the visitor's address as the tunnel or proxy on this computer passes it on, else the connection's
+function clientOf(req) {
+  const a = req.socket.remoteAddress || '';
+  const local = a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+  return { ip: (local && req.headers['cf-connecting-ip']) || a, ua: String(req.headers['user-agent'] || '').slice(0, 300),
+    country: local ? req.headers['cf-ipcountry'] : undefined };
+}
+let wrongKeys = { at: 0, n: 0 };            // keys that did not match in the last minute, from anyone
+
 async function readBody(req, max) {
   const chunks = [];
   let n = 0;
@@ -152,7 +164,27 @@ const server = createServer(async (req, res) => {
       if (now < LOG_MAX) await fsp.appendFile(LOG, text);
       res.writeHead(204); return res.end();
     }
+    if (p === '/hi') {
+      if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
+      const site = req.headers['sec-fetch-site'];
+      const body = await readBody(req, 512);
+      if (STATS && (!site || site === 'same-origin')) {
+        try { STATS.hit(JSON.parse(body.toString('utf8')), clientOf(req)); } catch {}
+      }
+      res.writeHead(204); return res.end();
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
+    if (p === '/stats.json') {
+      res.setHeader('Cache-Control', 'no-store');
+      const now = Date.now();
+      if (now - wrongKeys.at > 60000) wrongKeys = { at: now, n: 0 };
+      if (!STATS) { res.writeHead(404); return res.end(); }
+      if (wrongKeys.n >= 20) { res.writeHead(429); return res.end(); }
+      if (!STATS.allowed(req.headers.authorization)) { wrongKeys.n++; res.writeHead(401); return res.end(); }
+      const body = Buffer.from(JSON.stringify(STATS.summary()));
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': body.length });
+      return res.end(req.method === 'HEAD' ? undefined : body);
+    }
     if (p === '/game.json') {
       const l = await gameList();
       res.setHeader('Cache-Control', 'no-cache');
@@ -172,6 +204,7 @@ const server = createServer(async (req, res) => {
     if (p === '/hp2.wasm') return await sendWasm(req, res);
     let rel = decodeURIComponent(p);
     if (rel === '/') rel = '/index.html';
+    else if (rel === '/stats') rel = '/stats.html';
     const file = path.join(STATIC, path.normalize(rel));
     if (!file.startsWith(STATIC + path.sep)) { res.writeHead(403); return res.end(); }
     return await sendFile(req, res, file, TYPES[path.extname(file)]);
@@ -186,8 +219,14 @@ statSync(path.join(DATA, 'NFSHP2'));
 statSync(path.join(DATA, 'data', 'SLUS_203.62'));
 if (LOG) await fsp.mkdir(path.dirname(LOG), { recursive: true });
 const l = await gameList();
+// the counts on disk before a stop (systemctl stop, Ctrl+C)
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
+  try { STATS?.save(); } catch (e) { console.error(`stats: ${e.message}`); }
+  process.exit(0);
+});
 server.listen(PORT, HOST, () => {
   const where = LOCAL ? `http://localhost:${PORT}/` : `port ${PORT} on ${HOST} (open it through your https address)`;
   console.log(`hp2: ${where}`);
   console.log(`     game ${DATA}: ${l.count} entries, ${(l.size / 1e9).toFixed(2)} GB${LOG ? `; the page's log: ${LOG}` : ''}`);
+  if (STATS) console.log(`     counts in ${path.resolve(arg('--stats'))}; to see them, /stats with the key in ${STATS.keyFile}`);
 });
