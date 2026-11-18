@@ -318,7 +318,7 @@ export class Renderer {
     if (Atomics.waitAsync) {
       const at = (this.ctlPtr >> 2) + C.state;
       const loop = async () => {
-        for (;;) {
+        while (!this.stopped) {
           step();
           const v = Atomics.load(this.i32(), at);
           if (v === S_READY) continue;
@@ -328,10 +328,12 @@ export class Renderer {
       };
       loop();
     } else {
-      const tick = () => { step(); requestAnimationFrame(tick); };
+      const tick = () => { if (this.stopped) return; step(); requestAnimationFrame(tick); };
       requestAnimationFrame(tick);
     }
   }
+  // the game has ended: no more frames to wait for
+  stop() { this.stopped = true; }
 
   poll() {
     const i32 = this.i32(), st = (this.ctlPtr >> 2) + C.state;

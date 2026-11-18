@@ -102,6 +102,12 @@ let game = null;
 // the game is over (its own Quit, or an error): the start panel again, and Play starts a fresh game (a reload: the process's memory is spent)
 function ended(text, bad = false) {
   playingFor(false);
+  // the game's other threads go on after its main one ends (the one that makes the sound among them): they stop here, and the sound and
+  // the picture with them. The file worker stays to finish what it was asked (a save); nothing more comes to it
+  for (const w of game?.workers || []) w.terminate();
+  game?.sound?.ctx?.close().catch(() => {});
+  game?.renderer?.stop();
+  wake?.release().catch(() => {});
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   $('stage').hidden = true;
   $('start').hidden = false;
@@ -212,11 +218,14 @@ const saves = new SavesPanel({ busy });
 const gameData = new GameDataPanel({ busy, done: () => count('preload') });
 window.hp2page = { saves, gameData };       // for tools/cdp.mjs runs
 
-count('view');
+// "Play again" reloads the page and the game starts as soon as it can, without a second press (sessionStorage: this tab only)
+let again = false;
+try { again = sessionStorage.getItem('hp2.again') === '1'; sessionStorage.removeItem('hp2.again'); } catch {}
+if (!again) count('view');
 let modulePromise = boot().then(m => {
   playBtn.disabled = false;
   setStatus('Ready', 'Press Play or Enter to start.');
-  if (params.has('autoplay')) playBtn.click();
+  if (params.has('autoplay') || again) playBtn.click();
   return m;
 }).catch(err => {
   logLine(`[page] ${err.stack || err}`, 2);
@@ -226,7 +235,11 @@ let modulePromise = boot().then(m => {
 });
 
 async function play() {
-  if (playBtn.dataset.again) { location.reload(); return; }
+  if (playBtn.dataset.again) {
+    try { sessionStorage.setItem('hp2.again', '1'); } catch {}
+    location.reload();
+    return;
+  }
   if (playBtn.disabled) return;
   playBtn.disabled = true;
   running = true;
@@ -238,8 +251,10 @@ async function play() {
     $('stage').hidden = false;
     $('screen').focus();
     if (phone) {
-      // a phone or tablet: the game on the whole screen (not on an iPhone, which has no full screen for a page), and the screen kept on
-      $('stage').requestFullscreen?.().catch(() => {});
+      // a phone or tablet: the game on the whole screen (not on an iPhone, which has no full screen for a page), and the screen kept on.
+      // Started by itself ("Play again" after the reload) there was no touch to allow it: the first touch on the game does
+      const full = () => $('stage').requestFullscreen?.();
+      full()?.catch(() => $('stage').addEventListener('pointerup', () => full()?.catch(() => {}), { once: true }));
       awake();
     }
     const g = await start(module);
