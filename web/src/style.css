@@ -158,6 +158,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #screen.nocursor { cursor: none; }
 .hud { position: absolute; top: 8px; right: 12px; font: 12px/1.4 ui-monospace, Menlo, monospace; color: #fffa; text-shadow: 0 1px 2px #000;
   pointer-events: none; white-space: pre; }
+/* a new version is out (main.js): a few seconds over the picture, between races */
+.note { position: absolute; left: 50%; top: max(12px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 3; margin: 0;
+  max-width: calc(100% - 32px); width: max-content; padding: 10px 16px; border: 1px solid var(--line); border-radius: 10px;
+  background: #05101ee6; color: var(--text); font: 14px/1.4 system-ui, sans-serif; text-align: center; pointer-events: none; }
 
 /* ---- touch controls (touch.js): over the game held sideways; held upright, the picture on top and the controls under it.
    --t is a big button's size, from the screen's short side; the phone's rounded corners and notch are kept clear (safe-area) ---- */

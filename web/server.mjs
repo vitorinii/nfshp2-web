@@ -3,6 +3,8 @@
 //
 //   /              the page (web/src), with the headers SharedArrayBuffer needs (cross-origin isolated)
 //   /hp2.wasm      the module (build/web/hp2.wasm), gzipped once in memory for browsers that take it
+//   /version       the version of the page and the module, as they were when the server started: an open page asks for it to know
+//                  a newer one is out (a deploy: the files copied, then the server restarted)
 //   /game.json     the game folder's list: every file's path, size and time, and a version made from them
 //   /game?f=<path> a file of the game folder (NFSHP2/ from the disc, data/SLUS_203.62), read-only, in byte ranges, for the page only.
 //                  No file extension in the address: a CDN (Cloudflare) caches names like ZZDATA.BIN and then answers ranges whole
@@ -53,6 +55,15 @@ function headers(res) {
   res.setHeader('Strict-Transport-Security', 'max-age=31536000');     // browsers keep it from https answers only
 }
 const etagOf = st => `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+
+// the version of what the page is made of: the module and web/src (not the counts' page), made at the start. Not again as files change:
+// a deploy copies them one by one, and a page that reloaded halfway would have some of each; the restart after the copy says it is done
+async function pageVersion() {
+  const names = (await fsp.readdir(STATIC)).filter(n => !n.startsWith('.') && !n.startsWith('stats.')).sort();
+  const tags = await Promise.all([WASM, ...names.map(n => path.join(STATIC, n))].map(f => fsp.stat(f).then(etagOf, () => '-')));
+  return createHash('sha1').update(JSON.stringify([names, tags])).digest('hex').slice(0, 12);
+}
+const VERSION = Buffer.from(JSON.stringify({ v: await pageVersion() }));
 
 // ---- the game folder's list, made once (and again when the folder's top changes) -------------------------------------------------
 let listing = null;
@@ -184,6 +195,10 @@ const server = createServer(async (req, res) => {
       const body = Buffer.from(JSON.stringify(STATS.summary()));
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': body.length });
       return res.end(req.method === 'HEAD' ? undefined : body);
+    }
+    if (p === '/version') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': VERSION.length, 'Cache-Control': 'no-store' });
+      return res.end(req.method === 'HEAD' ? undefined : VERSION);
     }
     if (p === '/game.json') {
       const l = await gameList();

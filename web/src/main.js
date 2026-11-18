@@ -218,13 +218,63 @@ const saves = new SavesPanel({ busy });
 const gameData = new GameDataPanel({ busy, done: () => count('preload') });
 window.hp2page = { saves, gameData };       // for tools/cdp.mjs runs
 
+// ---- a newer version on the server (a deploy). The page asks for the server's version every 5 minutes, when it comes back into view,
+// and at Play. With nothing to lose on the page, it reloads. At Play, it reloads and the game starts straight away: no game starts on
+// an older page than the server's (the parts loaded at Play would be new, the module old). During a game, a note once; the next Play
+// takes the new version. Once per version in a tab: a server that kept answering another one would make a loop ----
+async function serverVersion(ms = 5000) {
+  try {
+    const r = await fetch('/version', { cache: 'no-store', signal: AbortSignal.timeout(ms) });
+    return r.ok ? (await r.json()).v || null : null;
+  } catch { return null; }
+}
+const ours = serverVersion();                // the version this page is made of, asked as it loads (null: not known, any answer is newer)
+let reloadedFor = null, updated = false;
+try {
+  reloadedFor = sessionStorage.getItem('hp2.reloadedFor');
+  updated = sessionStorage.getItem('hp2.updated') === '1';
+  sessionStorage.removeItem('hp2.updated');
+} catch {}
+async function newer(ms) {
+  const [mine, now] = await Promise.all([ours, serverVersion(ms)]);
+  return { mine, v: now && now !== mine ? now : null };
+}
+function reloadFor(v, andPlay) {
+  if (v === reloadedFor) return false;
+  try { sessionStorage.setItem('hp2.reloadedFor', v); sessionStorage.setItem(andPlay ? 'hp2.again' : 'hp2.updated', '1'); } catch { return false; }
+  location.reload();
+  return true;
+}
+// nothing to lose: no game on this page, no download of the game data, no saves being restored, no dialog open
+const calm = () => !running && !gameData.abort && !saves.restoring && !document.querySelector('dialog[open]');
+let noted = false, checked = Date.now();
+async function check() {
+  checked = Date.now();
+  const { mine, v } = await newer();
+  if (!v) return;
+  if (calm()) reloadFor(v, false);
+  else if (mine && !noted && !$('stage').hidden) { noted = true; noteNewer(); }
+}
+setInterval(check, 5 * 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - checked > 60000) check(); });
+// during a game: a note on the picture for a few seconds, once the game is not in a race
+function noteNewer() {
+  const wait = setInterval(() => {
+    if ($('stage').hidden) return clearInterval(wait);
+    if (!game?.input || game.input.scene() === 2) return;
+    clearInterval(wait);
+    $('note').hidden = false;
+    setTimeout(() => { $('note').hidden = true; }, 8000);
+  }, 1000);
+}
+
 // "Play again" reloads the page and the game starts as soon as it can, without a second press (sessionStorage: this tab only)
 let again = false;
 try { again = sessionStorage.getItem('hp2.again') === '1'; sessionStorage.removeItem('hp2.again'); } catch {}
-if (!again) count('view');
+if (!again && !updated) count('view');      // a reload for Play again or a new version is the same visit
 let modulePromise = boot().then(m => {
   playBtn.disabled = false;
-  setStatus('Ready', 'Press Play or Enter to start.');
+  setStatus('Ready', `${updated ? 'Updated to the latest version. ' : ''}Press Play or Enter to start.`);
   if (params.has('autoplay') || again) playBtn.click();
   return m;
 }).catch(err => {
@@ -245,8 +295,9 @@ async function play() {
   running = true;
   gameData.stop();                    // what was preloaded is kept; the rest comes on the next Preload
   try {
-    const module = await modulePromise;
+    const [module, { v }] = await Promise.all([modulePromise, newer(2500)]);
     if (!module) return;
+    if (v && reloadFor(v, true)) return;     // a newer version: the page again with it, and the game straight away
     $('start').hidden = true;
     $('stage').hidden = false;
     $('screen').focus();

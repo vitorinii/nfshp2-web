@@ -29,7 +29,9 @@ export class SavesPanel {
     $('restore-file').addEventListener('change', e => {
       const f = e.target.files[0];
       e.target.value = '';
-      if (f) this.restore(f).catch(err => this.say(err.message, true));
+      if (!f) return;
+      this.restoring = true;                   // the saves are replaced: the page does not reload for a new version meanwhile
+      this.restore(f).catch(err => this.say(err.message, true)).finally(() => { this.restoring = false; });
     });
     this.refresh().catch(e => this.say(e.message, true));
   }

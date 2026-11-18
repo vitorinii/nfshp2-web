@@ -14,4 +14,5 @@ case "$DEST" in
   *)   mkdir -p "$DEST" ;;
 esac
 rsync -a --relative --delete --progress --exclude '.complete' start.sh deploy/nfshp2-web.service web/server.mjs web/stats.mjs web/src build/web/hp2.wasm game "$DEST/"
-echo "Copied. On that machine: sudo systemctl restart nfshp2-web (the first time: deploy/nfshp2-web.service)."
+echo "Copied. On that machine: sudo systemctl restart nfshp2-web (the first time: deploy/nfshp2-web.service). Open pages take the new"
+echo "version after the restart: the server tells it apart then (/version)."

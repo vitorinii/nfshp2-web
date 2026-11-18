@@ -134,6 +134,8 @@ export class Input {
     if (!document.fullscreenElement) stage.requestFullscreen().catch(() => {});
     else document.exitFullscreen();
   }
+  // what the game shows (host_input.h): 0 logos, films, loading; 1 menus; 2 driving
+  scene() { return this.i32a()[(this.ptr + OFF.scene) >> 2]; }
   frame() {
     const wantCursor = this.i32a()[(this.ptr + OFF.cursor) >> 2] !== 0;
     if (wantCursor !== this.cursorShown) { this.cursorShown = wantCursor; this.canvas.classList.toggle('nocursor', !wantCursor); }
