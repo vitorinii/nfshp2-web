@@ -8,7 +8,7 @@
 //   /...        everything else: the save folder, in this browser (store.js, save/): hp2.ini, saves/. A file opened for writing is held
 //               whole here and written back when it is closed (or synced, or every two seconds while it changes)
 import { E, Op, opName, RPC_BYTES, RPC_DONE, RPC_I32, RPC_I64_BYTE, RPC_POSTED, CTL_IO_BELL } from './proto.js';
-import { dirAt, gameRoot, lookup, readGameIndex, saveRoot, writeFile } from './store.js';
+import { PART, dirAt, gameRoot, lookup, partName, readGameIndex, saveRoot, writeFile } from './store.js';
 import { fetchRange } from './net.js';
 
 let memory, ctl, rpcI32, rpcI64, slots = 0;
@@ -148,8 +148,15 @@ async function fetchBlock(p, i) {
   const n = tree.get(p);
   if (n && n.here) {
     try {
-      n.file ||= await (await lookup(gameDir, parts(p).slice(1))).handle.getFile();
-      return new Uint8Array(await n.file.slice(i * BLOCK, (i + 1) * BLOCK).arrayBuffer());
+      const at = i * BLOCK, ps = parts(p).slice(1);
+      if (n.s > PART) {       // a big file is kept in pieces (store.js)
+        const k = Math.floor(at / PART), name = ps[ps.length - 1];
+        n.pieces ||= [];
+        n.pieces[k] ||= await (await lookup(gameDir, [...ps.slice(0, -1), partName(name, k)])).handle.getFile();
+        return new Uint8Array(await n.pieces[k].slice(at - k * PART, at - k * PART + BLOCK).arrayBuffer());
+      }
+      n.file ||= await (await lookup(gameDir, ps)).handle.getFile();
+      return new Uint8Array(await n.file.slice(at, at + BLOCK).arrayBuffer());
     } catch (e) {
       log(`${p}: this browser's copy could not be read (${e.message}), from the server instead`);
       n.here = false;

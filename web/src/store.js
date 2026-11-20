@@ -6,6 +6,12 @@
 
 export const SAVE_DIR = 'save', GAME_DIR = 'game', GAME_INDEX = '.files.json';
 
+// A browser's private storage will not hold one file of 2000 MiB or more (Chrome and Brave: writes past it fail or are cut off), and
+// ZZDATA.BIN is 2.9 GB. So a game file bigger than PART is kept in pieces of PART bytes, "ZZDATA.BIN.part0", ".part1", ...
+// (PART is a multiple of the I/O worker's 1 MiB blocks: a block never crosses two pieces).
+export const PART = 1 << 30;
+export const partName = (name, k) => `${name}.part${k}`;
+
 let rootP = null;
 export const root = () => (rootP ||= navigator.storage.getDirectory());
 

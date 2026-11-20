@@ -1,5 +1,5 @@
 // The start page's panels: Controls (tabs), Saves (in this browser: profiles, backup, restore) and Game data (the preload).
-import { GAME_DIR, gameRoot, lookup, readGameIndex, root, saveRoot, walkFiles, writeFile, writeGameIndex, dirAt } from './store.js';
+import { GAME_DIR, PART, gameRoot, lookup, partName, readGameIndex, root, saveRoot, walkFiles, writeFile, writeGameIndex, dirAt } from './store.js';
 import { makeZip, readZip } from './zip.js';
 import { fetchRange } from './net.js';
 
@@ -113,7 +113,9 @@ export class GameDataPanel {
   }
   fail(e) {
     this.abort = null;
-    this.msg.textContent = e.name === 'QuotaExceededError' ? 'This browser ran out of space for the game data.' : e.message;
+    this.msg.textContent = e.name === 'QuotaExceededError'
+      ? 'This browser ran out of space for the game data. What was saved stays and the game streams the rest from the server; free some disk space and Preload again to finish.'
+      : e.message;
     this.msg.hidden = false;
     this.refresh().catch(() => {});
   }
@@ -156,9 +158,10 @@ export class GameDataPanel {
     if (navigator.storage.persist) await navigator.storage.persist().catch(() => false);
     const est = navigator.storage.estimate ? await navigator.storage.estimate() : null;
     const need = g.size - have;
+    // The estimate is only a hint: Brave and others report a fuzzed or capped quota, so a low number does not stop the
+    // preload. A browser that is really full says so while writing (QuotaExceededError, below).
     if (est && est.quota - est.usage < need * 1.02) {
-      this.abort = null;
-      throw new Error(`This browser has room for ${gb(Math.max(0, est.quota - est.usage))}, the game data needs ${gb(need)}. Free some disk space and try again.`);
+      console.warn(`[preload] the browser reports room for ${gb(Math.max(0, est.quota - est.usage))}, the game needs ${gb(need)}: trying anyway`);
     }
     this.show(have, g.size);
     const dir = await gameRoot();
@@ -168,9 +171,6 @@ export class GameDataPanel {
       for (const f of todo) {
         const parts = f.p.split('/');
         const d = await dirAt(dir, parts.slice(0, -1), true);
-        const fh = await d.getFileHandle(parts[parts.length - 1], { create: true });
-        // in 32 MB pieces, each asked for again on its own if the connection drops (net.js)
-        const w = await fh.createWritable();
         let got = 0;
         const onBytes = n => {
           got += n;
@@ -182,15 +182,24 @@ export class GameDataPanel {
           const left = speed > 0 ? (g.size - have - got) / speed : 0;
           this.text.textContent = `${gb(have + got)} of ${gb(g.size)}, ${gb(speed)}/s` + (left > 5 ? `, about ${left > 90 ? `${Math.ceil(left / 60)} minutes` : `${Math.ceil(left)} seconds`} left` : '');
         };
-        try {
-          for (let at = 0; at < f.s; at += PIECE) {
-            const data = await fetchRange(f.p, at, Math.min(at + PIECE, f.s) - 1, { signal: ac.signal, onBytes, log: s => console.warn(`[preload] ${s}`) });
-            await w.write({ type: 'write', position: at, data });
+        // a file over PART is kept in pieces of PART bytes: one file that big does not fit in the browser's storage (store.js)
+        const pieces = f.s > PART ? Math.ceil(f.s / PART) : 1;
+        for (let k = 0; k < pieces; k++) {
+          const lo = k * PART, hi = Math.min(lo + PART, f.s);
+          const name = parts[parts.length - 1];
+          const fh = await d.getFileHandle(pieces > 1 ? partName(name, k) : name, { create: true });
+          // in 32 MB pieces, each asked for again on its own if the connection drops (net.js)
+          const w = await fh.createWritable();
+          try {
+            for (let at = lo; at < hi; at += PIECE) {
+              const data = await fetchRange(f.p, at, Math.min(at + PIECE, hi) - 1, { signal: ac.signal, onBytes, log: s => console.warn(`[preload] ${s}`) });
+              await w.write({ type: 'write', position: at - lo, data });
+            }
+            await w.close();
+          } catch (e) {
+            await w.abort().catch(() => {});
+            throw e;
           }
-          await w.close();
-        } catch (e) {
-          await w.abort().catch(() => {});
-          throw e;
         }
         have += f.s;
         index.files[f.p] = [f.s, f.m];
