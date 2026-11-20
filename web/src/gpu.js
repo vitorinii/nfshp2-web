@@ -5,6 +5,8 @@
 //   the picture kept for the next frame's DisplayBlendPrevious; the depth rects read back for the sun's flare; the picture into the canvas.
 // Each strip is drawn up to three times (the strip, the road's specular, the sphere map) by draw_target's rules.
 
+import { prefs } from './prefs.js';
+
 const GPU_MAGIC = 0x46325048;
 const C = { magic: 0, version: 1, size: 2, state: 3, frame: 4, attached: 5, framesDone: 6, features: 7, saved: 8, depthSeq: 9,
   depthBuf: 10, depthCap: 11, depthFrame: 12, errors: 13, wframeSize: 14, wdrawSize: 15, wuploadSize: 16, wfxSize: 17 };
@@ -130,6 +132,14 @@ export class Renderer {
       primitive: { topology: 'triangle-list' },
     });
     this.blitUniform = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    // the bars beside the picture (blit_bg_fs): its own pipeline and rect, the same layout
+    this.blitBgPipeline = d.createRenderPipeline({
+      layout: d.createPipelineLayout({ bindGroupLayouts: [this.blitLayout] }),
+      vertex: { module: this.module, entryPoint: 'blit_vs' },
+      fragment: { module: this.module, entryPoint: 'blit_bg_fs', targets: [{ format: this.format }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    this.blitBgUniform = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.samplers = {
       linear: d.createSampler({ magFilter: 'linear', minFilter: 'linear' }),
       nearest: d.createSampler({}),
@@ -285,6 +295,7 @@ export class Renderer {
       { binding: 2, resource: scene.createView() }, { binding: 3, resource: this.samplers.mip },
       { binding: 4, resource: { buffer: this.postUniform, size: 64 } }] });
     this.blitGroups = {};
+    this.blitBgGroup = null;
     this.envReady.fill(false);
     this.sphereReady = this.rvmReady = this.prevReady = false;
     this.log(`[gpu] picture ${W}x${H}, mirror ${rvm.w}x${rvm.h}, reflections ${envSize}`);
@@ -771,6 +782,22 @@ export class Renderer {
     if (!bg) bg = this.blitGroups[smooth] = d.createBindGroup({ layout: this.blitLayout, entries: [
       { binding: 0, resource: this.res.pic.colorView }, { binding: 1, resource: this.samplers[smooth] }, { binding: 2, resource: { buffer: this.blitUniform } }] });
     const bp = enc.beginRenderPass({ colorAttachments: [{ view: this.context.getCurrentTexture().createView(), clearValue: [0, 0, 0, 1], loadOp: 'clear', storeOp: 'store' }] });
+    // bars beside (or above) the picture: a soft, dimmed copy of it, scaled to cover the canvas and drawn only where the bars are
+    if (prefs.blurSides && (bx > 0 || by > 0)) {
+      const sx = from / W, sw = across / W, sh = (H * 444 / 448) / H, ca = cw / ch;
+      let rect;      // the picture's rect, cropped to the canvas's shape
+      if (ca > aspect) { const fh = sh * aspect / ca; rect = [sx, (sh - fh) / 2, sw, fh]; }
+      else { const fw = sw * ca / aspect; rect = [sx + (sw - fw) / 2, 0, fw, sh]; }
+      d.queue.writeBuffer(this.blitBgUniform, 0, new Float32Array([...rect, 0.06, 0.6, 0, 0]));
+      this.blitBgGroup ||= d.createBindGroup({ layout: this.blitLayout, entries: [
+        { binding: 0, resource: this.res.pic.colorView }, { binding: 1, resource: this.samplers.linear }, { binding: 2, resource: { buffer: this.blitBgUniform } }] });
+      bp.setViewport(0, 0, cw, ch, 0, 1);
+      bp.setPipeline(this.blitBgPipeline);
+      bp.setBindGroup(0, this.blitBgGroup);
+      const bars = bx > 0 ? [[0, 0, bx, ch], [bx + bw, 0, cw - bx - bw, ch]] : [[0, 0, cw, by], [0, by + bh, cw, ch - by - bh]];
+      for (const [x, y, w, h] of bars) if (w > 0 && h > 0) { bp.setScissorRect(x, y, w, h); bp.draw(3); }
+      bp.setScissorRect(0, 0, cw, ch);
+    }
     bp.setViewport(bx, by, bw, bh, 0, 1);
     bp.setPipeline(this.blitPipeline);
     bp.setBindGroup(0, bg);

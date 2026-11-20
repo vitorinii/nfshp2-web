@@ -2,12 +2,15 @@
 // runtime registers to the renderer, the sound and the input.
 import { CTL_EXIT, CTL_INTS, CTL_NEXT_TID, CTL_POOL, HOST_KIND_AUDIO, HOST_KIND_GPU, HOST_KIND_INPUT, POOL_MAX, POOL_RUN_MAIN, RPC_BYTES } from './proto.js';
 import { GameDataPanel, SavesPanel, tabs } from './panels.js';
-import { root } from './store.js';
+import { GraphicsPanel } from './graphics.js';
+import { root, seedSettings } from './store.js';
+import { prefs, setBlurSides } from './prefs.js';
 
 const $ = id => document.getElementById(id);
 const playBtn = $('play');
 const params = new URLSearchParams(location.search);
 const phone = matchMedia('(pointer: coarse)').matches;       // a phone or a tablet: touch controls, full screen on Play
+{ const box = $('blur-sides'); box.checked = prefs.blurSides; box.addEventListener('change', () => setBlurSides(box.checked)); }
 // the big status ("Loading", "Ready") and the line under it
 function setStatus(head, sub = '', bad = false) {
   $('status').textContent = head;
@@ -116,6 +119,7 @@ function ended(text, bad = false) {
   playBtn.firstChild.textContent = 'Play again ';
   playBtn.dataset.again = '1';
   saves.refresh().catch(() => {});
+  graphics.refresh().catch(() => {});       // the game may have changed its settings in its own menus
 }
 async function start(module) {
   const memory = new WebAssembly.Memory({ initial: MEM_INITIAL, maximum: MEM_MAX, shared: true });
@@ -143,6 +147,9 @@ async function start(module) {
     }
   };
 
+  // a new browser starts at the widest picture (16:9 where the window is that wide): before the game reads its settings
+  await seedSettings().then(w => w && logLine('[page] settings: new browser, picture aspect set to 16:9 (the game keeps it within the window)'),
+    e => logLine(`[page] settings seed failed: ${e.message}`, 2));
   setStatus('Starting', 'Opening the game folder.');
   const ioWorker = new Worker('io-worker.js', { type: 'module' });
   await new Promise((res, rej) => {
@@ -210,13 +217,17 @@ const busy = () => running;
 const showControls = tabs($('controls'));
 if (phone) showControls('touch');
 const showAbout = tabs($('about'));
+// Saves, Data and Graphics: one panel with tabs. A link to #saves, #data or #graphics opens that tab
+const showManage = tabs($('manage'));
+{ const named = ['saves', 'data', 'graphics'].find(n => location.hash === `#${n}`); if (named) { showManage(named); $('manage').scrollIntoView({ block: 'start' }); } }
 // "Credits below" in the header: the About panel's Credits tab, scrolled to
 function showCredits() { showAbout('credits'); $('about').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 $('credits-link').addEventListener('click', e => { e.preventDefault(); showCredits(); });
 if (location.hash === '#credits') showCredits();
 const saves = new SavesPanel({ busy });
 const gameData = new GameDataPanel({ busy, done: () => count('preload') });
-window.hp2page = { saves, gameData };       // for tools/cdp.mjs runs
+const graphics = new GraphicsPanel({ busy });
+window.hp2page = { saves, gameData, graphics };       // for tools/cdp.mjs runs
 
 // ---- a newer version on the server (a deploy). The page asks for the server's version every 5 minutes, when it comes back into view,
 // and at Play. With nothing to lose on the page, it reloads. At Play, it reloads and the game starts straight away: no game starts on

@@ -90,9 +90,14 @@
   </div>
 
   <div class="content">
-    <section class="panel" aria-labelledby="saves-title">
-      <div class="panel-head">
-        <h2 id="saves-title">Saves</h2>
+    <section class="panel" aria-label="Saves, game data and graphics" id="manage">
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" role="tab" data-tab="saves">Saves</button>
+        <button type="button" class="tab" role="tab" data-tab="data">Data</button>
+        <button type="button" class="tab" role="tab" data-tab="graphics">Graphics</button>
+      </div>
+      <div class="pane" data-tab="saves" role="tabpanel">
+      <div class="panel-head pane-head">
         <div class="row">
           <button type="button" class="btn" id="backup">Download backup</button>
           <button type="button" class="btn" id="restore">Restore</button>
@@ -103,11 +108,10 @@
       <ul class="profiles" id="profiles"></ul>
       <p class="msg" id="saves-msg" hidden></p>
       <p class="hint">Your profiles and settings stay in this browser, never on the server. A backup keeps them safe, or takes them to another browser.</p>
-    </section>
-
-    <section class="panel" aria-labelledby="data-title">
-      <div class="panel-head">
-        <h2 id="data-title">Game data on this device</h2>
+    
+      </div>
+      <div class="pane" data-tab="data" role="tabpanel">
+      <div class="panel-head pane-head">
         <div class="row">
           <button type="button" class="text-btn" id="data-remove" hidden>Remove</button>
           <button type="button" class="btn" id="preload" disabled>Preload the game data</button>
@@ -119,6 +123,26 @@
       <p class="hint">Preloaded, the game reads its tracks, cars and music from this device instead of the server: no waiting on a slow
         connection. Play stops the download; what came stays, and Preload fetches the rest later.</p>
       <p class="hint" id="data-local" hidden>You are playing from this computer's own server, so there is little to gain here.</p>
+    
+      </div>
+      <div class="pane" id="graphics" data-tab="graphics" role="tabpanel">
+      <div class="panel-head pane-head">
+        <button type="button" class="text-btn" id="graphics-reset">Reset all</button>
+      </div>
+      <p class="hint gfx-intro">The game's own Options, Graphics, here before you play. A change applies at the next Play; in the game you change the
+        same things the same way, and the two stay in step. Saved in this browser.</p>
+      <div id="graphics-groups"></div>
+      <p class="msg" id="graphics-msg" hidden></p>
+      <div id="blur-wrap" class="gfx-row gfx-page-option">
+        <div class="gfx-text">
+          <label class="check"><input type="checkbox" id="blur-sides"><span>Blurred bars beside the menus <em class="tag">Experimental</em></span></label>
+          <p class="hint gfx-help">The race fills a wide window, but the menus keep the shape they were made in, 4:3, so a wide window has bars on both
+            sides. This fills them with a soft copy of the menu instead of black. Off by default: it may not look right everywhere, and a movie's own
+            dark edge can show against it.</p>
+        </div>
+      </div>
+    
+      </div>
     </section>
 
     <section class="panel" aria-label="About this project" id="about">

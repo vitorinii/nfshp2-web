@@ -54,6 +54,26 @@ h1, h2, .status { font-style: italic; font-weight: 800; letter-spacing: -0.01em;
 h1 { margin: 0; font-size: 32px; line-height: 40px; }
 h2 { margin: 0 0 16px; font-size: 20px; line-height: 28px; color: var(--accent); }
 .hint { margin: 12px 0 0; color: var(--muted); font-size: 14px; }
+.check { display: flex; align-items: center; gap: 12px; min-height: 40px; cursor: pointer; }
+.check input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+/* the Graphics panel: groups of rows, a label and its help on the left, the control on the right */
+.gfx-intro { margin: 0 0 16px; }
+.gfx-group + .gfx-group { margin-top: 24px; }
+.gfx-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
+.gfx-head h3 { margin: 0; padding: 8px 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--chrome); }
+.gfx-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 240px); gap: 8px 24px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.gfx-row:last-child { border-bottom: 0; }
+.gfx-label { font-weight: 600; }
+.gfx-help { margin: 4px 0 0; }
+.gfx-control { display: flex; align-items: center; gap: 12px; }
+.gfx-control select { width: 100%; height: 40px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--well); color: var(--text); font: inherit; cursor: pointer; }
+.gfx-control select:disabled, .gfx-control input:disabled { opacity: .5; cursor: not-allowed; }
+.gfx-control input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.gfx-control output { min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.gfx-page-option { grid-template-columns: minmax(0, 1fr); }
+.gfx-page-option .check { min-height: 0; }
+@media (max-width: 560px) { .gfx-row { grid-template-columns: minmax(0, 1fr); } }
+.tag { margin-left: 8px; padding: 2px 8px; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); font-size: 12px; font-style: normal; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
 
 /* ---- header: the light bar on top, the title in chrome with its blue plate ---- */
 .top { position: relative; overflow: hidden; padding-top: 28px; }
@@ -130,7 +150,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   font: italic 700 16px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 .tab:hover { color: var(--text); }
 .tab.on { color: var(--accent); border-bottom-color: var(--accent); }
-#about .tabs .tab { font-size: 20px; font-weight: 800; height: 36px; }
+#about .tabs .tab, #manage .tabs .tab { font-size: 20px; font-weight: 800; height: 36px; }
+#manage .tabs { margin-bottom: 20px; }
+.pane[hidden] { display: none; }
+/* a tab's own buttons (backup, preload, reset) at the top right of its pane: the tab is the heading */
+.pane-head { justify-content: flex-end; }
 
 /* ---- controls ---- */
 .keys { margin: 0; padding: 0; list-style: none; }

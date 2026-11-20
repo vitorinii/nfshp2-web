@@ -70,6 +70,17 @@ export async function walkFiles(dir, prefix = '') {
 }
 
 export async function saveRoot() { return (await root()).getDirectoryHandle(SAVE_DIR, { create: true }); }
+
+// A browser with no settings file yet starts at the widest picture its window allows (hp2.ini: aspect=2, 16:9). The game's own default is 4:3,
+// which leaves every wide window with bars. The game never draws wider than the window (pc_aspect: the setting, no wider than the canvas), so
+// a 4:3 window still shows 4:3. Only when there is no hp2.ini: once the game has written one, the player's own choice (Options > Graphics >
+// Resolution > Aspect Ratio) stays. Returns whether it wrote it.
+export async function seedSettings() {
+  const dir = await saveRoot();
+  if (await lookup(dir, ['hp2.ini'])) return false;
+  await writeFile(dir, ['hp2.ini'], 'aspect=2\n');
+  return true;
+}
 export async function gameRoot() { return (await root()).getDirectoryHandle(GAME_DIR, { create: true }); }
 
 // the preloaded files: {version, files: {path: [size, time]}}

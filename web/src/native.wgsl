@@ -245,3 +245,21 @@ fn blit_fs(i: BOut) -> @location(0) vec4<f32> {
   }
   return vec4<f32>(rgb, 1.0);
 }
+// the bars beside a picture that does not fill the canvas: a soft, dimmed copy of it. Here src is the picture's rect scaled to cover the
+// whole canvas; grade.x is the blur's radius (a fraction of the picture's height), grade.y the share of the light kept. 24 taps on a golden
+// spiral, each kept inside the rect (its edge colour spreads; the black beyond the picture never bleeds in).
+@fragment
+fn blit_bg_fs(i: BOut) -> @location(0) vec4<f32> {
+  let size = vec2<f32>(textureDimensions(pic, 0));
+  let lo = blit.src.xy;
+  let hi = blit.src.xy + blit.src.zw;
+  let radius = blit.grade.x * size.y;
+  var sum = vec3<f32>(0.0);
+  for (var k = 0; k < 24; k++) {
+    let a = f32(k) * 2.39996323;
+    let r = sqrt((f32(k) + 0.5) / 24.0) * radius;
+    let at = clamp(i.uv + vec2<f32>(cos(a), sin(a)) * r / size, lo, hi);
+    sum += textureSampleLevel(pic, pic_smp, at, 0.0).rgb;
+  }
+  return vec4<f32>(sum / 24.0 * blit.grade.y, 1.0);
+}
