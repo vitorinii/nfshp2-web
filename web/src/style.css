@@ -54,6 +54,7 @@ h1, h2, .status { font-style: italic; font-weight: 800; letter-spacing: -0.01em;
 h1 { margin: 0; font-size: 32px; line-height: 40px; }
 h2 { margin: 0 0 16px; font-size: 20px; line-height: 28px; color: var(--accent); }
 .hint { margin: 12px 0 0; color: var(--muted); font-size: 14px; }
+.nowrap { white-space: nowrap; }
 .check { display: flex; align-items: center; gap: 12px; min-height: 40px; cursor: pointer; }
 .check input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 /* the Graphics panel: groups of rows, a label and its help on the left, the control on the right */
