@@ -95,6 +95,7 @@ export class SavesPanel {
 
 // ---- Game data: the preload --------------------------------------------------------------------------------------------------------
 const PIECE = 32 << 20;
+const LANES = 4;              // pieces asked for at once (about LANES x 32 MB held in memory)
 
 export class GameDataPanel {
   constructor({ busy, done }) {
@@ -188,18 +189,32 @@ export class GameDataPanel {
           const lo = k * PART, hi = Math.min(lo + PART, f.s);
           const name = parts[parts.length - 1];
           const fh = await d.getFileHandle(pieces > 1 ? partName(name, k) : name, { create: true });
-          // in 32 MB pieces, each asked for again on its own if the connection drops (net.js)
+          // in 32 MB pieces, each asked for again on its own if the connection drops (net.js). LANES at a time: one request
+          // alone does not fill the connection (14-18 MB/s measured against 60 MB/s free), and the pieces may arrive in any
+          // order since each is written at its own position.
           const w = await fh.createWritable();
-          try {
-            for (let at = lo; at < hi; at += PIECE) {
-              const data = await fetchRange(f.p, at, Math.min(at + PIECE, hi) - 1, { signal: ac.signal, onBytes, log: s => console.warn(`[preload] ${s}`) });
+          const stop = new AbortController();
+          const onAbort = () => stop.abort();
+          ac.signal.addEventListener('abort', onAbort);
+          let cursor = lo;
+          const lane = async () => {
+            while (!stop.signal.aborted && cursor < hi) {
+              const at = cursor;
+              cursor += PIECE;
+              const data = await fetchRange(f.p, at, Math.min(at + PIECE, hi) - 1, { signal: stop.signal, onBytes, log: s => console.warn(`[preload] ${s}`) });
               await w.write({ type: 'write', position: at - lo, data });
             }
-            await w.close();
-          } catch (e) {
+          };
+          // a lane that fails stops the others; every lane has ended before the file is closed or dropped
+          const done = await Promise.allSettled(Array.from({ length: Math.min(LANES, Math.ceil((hi - lo) / PIECE)) }, () => lane().catch(e => { stop.abort(); throw e; })));
+          ac.signal.removeEventListener('abort', onAbort);
+          const failed = done.filter(r => r.status === 'rejected').map(r => r.reason);
+          if (failed.length || stop.signal.aborted) {
             await w.abort().catch(() => {});
-            throw e;
+            // the lane that broke, not the ones it stopped
+            throw failed.find(e => e.name !== 'AbortError') || failed[0] || new DOMException('stopped', 'AbortError');
           }
+          await w.close().catch(async e => { await w.abort().catch(() => {}); throw e; });
         }
         have += f.s;
         index.files[f.p] = [f.s, f.m];
